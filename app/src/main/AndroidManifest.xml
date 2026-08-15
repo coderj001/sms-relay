@@ -4,7 +4,9 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
         android:label="SMS Rule Relay"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.SmsRelay">
         <activity
@@ -26,4 +28,3 @@
         </receiver>
     </application>
 </manifest>
-
