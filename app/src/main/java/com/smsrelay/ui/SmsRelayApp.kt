@@ -2,6 +2,8 @@
 
 package com.smsrelay.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,6 +64,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +80,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
 private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED }
@@ -83,8 +89,13 @@ private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED }
 fun SmsRelayApp() {
     var screen by remember { mutableStateOf(AppScreen.RULES) }
     var automationEnabled by remember { mutableStateOf(true) }
-    var receiveAllowed by remember { mutableStateOf(false) }
-    var sendAllowed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var receiveAllowed by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED)
+    }
+    var sendAllowed by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED)
+    }
     var deleteDialogVisible by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -165,6 +176,8 @@ private fun RulesScreen(
     sendAllowed: Boolean,
     onOpenPermissions: () -> Unit,
 ) {
+    var otpRuleEnabled by remember { mutableStateOf(true) }
+    var creditRuleEnabled by remember { mutableStateOf(true) }
     Scaffold(
         topBar = { AppTopBar(title = "SMS Rules") },
         floatingActionButton = {
@@ -183,9 +196,9 @@ private fun RulesScreen(
             Spacer(Modifier.height(20.dp))
             Text("Your rules", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
-            RuleCard("Bank OTP Forward", "+91 98765 43210", "OTP\\s*is\\s*(\\d{6})", "••••••7890", onEdit, onDelete)
+            RuleCard("Bank OTP Forward", "+91 98765 43210", "OTP\\s*is\\s*(\\d{6})", "••••••7890", otpRuleEnabled, { otpRuleEnabled = it }, onEdit, onDelete)
             Spacer(Modifier.height(12.dp))
-            RuleCard("Bank Credit Alert", "AD-HDFCBK", "credited.*INR...", "••••••4321", onEdit, onDelete)
+            RuleCard("Bank Credit Alert", "AD-HDFCBK", "credited.*INR...", "••••••4321", creditRuleEnabled, { creditRuleEnabled = it }, onEdit, onDelete)
             Spacer(Modifier.height(96.dp))
         }
     }
@@ -234,7 +247,16 @@ private fun PermissionStatusCard(receiveAllowed: Boolean, sendAllowed: Boolean, 
 }
 
 @Composable
-private fun RuleCard(title: String, sender: String, pattern: String, destination: String, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun RuleCard(
+    title: String,
+    sender: String,
+    pattern: String,
+    destination: String,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -244,9 +266,9 @@ private fun RuleCard(title: String, sender: String, pattern: String, destination
                         Spacer(Modifier.width(8.dp))
                         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     }
-                    StatusPill("Enabled", MaterialTheme.colorScheme.primary)
+                    StatusPill(if (enabled) "Enabled" else "Disabled", if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(checked = true, onCheckedChange = {})
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
                 IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Edit rule") }
                 IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Delete rule") }
             }
@@ -507,11 +529,22 @@ private fun PermissionOnboardingScreen(
     onSendAllowed: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val receivePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) onReceiveAllowed() }
+    val sendPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) onSendAllowed() }
+
     Scaffold(topBar = { AppTopBar("SMS Permissions", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("SMS Rule Relay needs access to incoming SMS messages so it can evaluate your rules, and permission to send SMS when a rule matches.", style = MaterialTheme.typography.bodyLarge)
-            PermissionCard(Icons.Filled.Inbox, "Receive SMS", "Required to detect new incoming SMS messages and check them against your rules.", receiveAllowed, onReceiveAllowed)
-            PermissionCard(Icons.Filled.Send, "Send SMS", "Required to automatically send an SMS when a rule matches.", sendAllowed, onSendAllowed)
+            PermissionCard(Icons.Filled.Inbox, "Receive SMS", "Required to detect new incoming SMS messages and check them against your rules.", receiveAllowed) {
+                receivePermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
+            }
+            PermissionCard(Icons.Filled.Send, "Send SMS", "Required to automatically send an SMS when a rule matches.", sendAllowed) {
+                sendPermissionLauncher.launch(Manifest.permission.SEND_SMS)
+            }
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Your messages stay on your device", fontWeight = FontWeight.SemiBold)
