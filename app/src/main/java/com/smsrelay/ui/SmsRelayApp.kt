@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Message
@@ -34,10 +35,12 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -62,6 +65,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -83,7 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
-private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED }
+private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED, MATCHED }
 
 @Composable
 fun SmsRelayApp() {
@@ -119,7 +124,7 @@ fun SmsRelayApp() {
                 sendAllowed = sendAllowed,
                 onOpenPermissions = { screen = AppScreen.ONBOARDING },
             )
-            AppScreen.HISTORY -> HistoryScreen(innerPadding, onOpenDetails = { screen = AppScreen.DETAILS })
+            AppScreen.HISTORY -> HistoryScreen(innerPadding, automationEnabled, receiveAllowed && sendAllowed, onReviewPermissions = { screen = AppScreen.ONBOARDING }, onOpenDetails = { screen = AppScreen.DETAILS })
             AppScreen.SETTINGS -> SettingsScreen(
                 contentPadding = innerPadding,
                 automationEnabled = automationEnabled,
@@ -194,7 +199,14 @@ private fun RulesScreen(
             Spacer(Modifier.height(20.dp))
             PermissionStatusCard(receiveAllowed, sendAllowed, onOpenPermissions)
             Spacer(Modifier.height(20.dp))
-            Text("Your rules", style = MaterialTheme.typography.titleMedium)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Your rules", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                FilledTonalButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 12.dp)) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add Rule")
+                }
+            }
             Spacer(Modifier.height(8.dp))
             RuleCard("Bank OTP Forward", "+91 98765 43210", "OTP\\s*is\\s*(\\d{6})", "••••••7890", otpRuleEnabled, { otpRuleEnabled = it }, onEdit, onDelete)
             Spacer(Modifier.height(12.dp))
@@ -469,36 +481,85 @@ private fun TestResultCard(sender: String, message: String) {
 }
 
 @Composable
-private fun HistoryScreen(contentPadding: PaddingValues, onOpenDetails: () -> Unit) {
+private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
+
+@Composable
+private fun HistoryScreen(contentPadding: PaddingValues, automationEnabled: Boolean, permissionsReady: Boolean, onReviewPermissions: () -> Unit, onOpenDetails: () -> Unit) {
     var filter by remember { mutableStateOf(HistoryFilter.ALL) }
-    Scaffold(topBar = { AppTopBar("History") }) { padding ->
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var clearDialog by remember { mutableStateOf(false) }
+    var items by remember {
+        mutableStateOf(listOf(
+            HistoryItem("Bank OTP Forward", HistoryFilter.SENT, "+91 98765 43210", "••••••7890", "Today, 10:42 PM", "Today"),
+            HistoryItem("Bank Credit Alert", HistoryFilter.MATCHED, "AD-HDFCBK", "••••••3210", "Today, 8:42 PM", "Today"),
+            HistoryItem("Server Alert", HistoryFilter.FAILED, "Alert service", "••••••4567", "Today, 7:16 PM", "Today", "No mobile network"),
+            HistoryItem("Payment Forward", HistoryFilter.BLOCKED, "+91 90000 11111", "••••••2222", "Yesterday, 6:03 PM", "Yesterday", "Rate limit"),
+        ))
+    }
+    val visible = items.filter { (filter == HistoryFilter.ALL || it.status == filter) && (query.isBlank() || it.rule.contains(query, true) || it.sender.contains(query, true) || it.destination.contains(query)) }
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { if (searching) OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") }) else Column { Text("History", fontWeight = FontWeight.SemiBold); Text("View matched rules, sent messages, failures, and blocked actions.", style = MaterialTheme.typography.labelSmall) } },
+            actions = {
+                IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(Icons.Filled.Search, "Search history") }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "History options") }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) { DropdownMenuItem(text = { Text("Clear History") }, onClick = { menuOpen = false; clearDialog = true }) }
+                }
+            },
+        )
+    }) { padding ->
         Column(Modifier.fillMaxSize().padding(contentPadding).padding(padding)) {
+            if (!permissionsReady) CompactBanner("SMS permissions are incomplete", "Review Permissions", MaterialTheme.colorScheme.tertiary, onReviewPermissions)
+            if (!automationEnabled) CompactBanner("Automation is currently off", null, MaterialTheme.colorScheme.onSurfaceVariant, {})
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HistoryFilter.entries.forEach { item -> FilterChip(filter == item, { filter = item }, label = { Text(item.name.lowercase().replaceFirstChar { it.uppercase() }) }) }
             }
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                HistoryEntry("Bank Credit Alert", "SMS sent successfully", "Today · 8:42 PM", "AD-HDFCBK → ••••••3210", MaterialTheme.colorScheme.primary, onOpenDetails)
-                HistoryEntry("Server Alert", "Failed to send", "Today · 7:16 PM", "Reason: No mobile network", MaterialTheme.colorScheme.error, onOpenDetails)
-                HistoryEntry("Payment Forward", "Blocked by rate limit", "Yesterday · 6:03 PM", "No SMS was sent", MaterialTheme.colorScheme.tertiary, onOpenDetails)
+            if (visible.isEmpty()) {
+                Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.History, null, tint = MaterialTheme.colorScheme.primary)
+                    Text("No activity yet", style = MaterialTheme.typography.titleMedium)
+                    Text("When an SMS matches one of your rules, its execution result will appear here.", style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    visible.groupBy { it.group }.forEach { (group, records) ->
+                        Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+                        records.forEach { HistoryEntry(it, onOpenDetails) }
+                    }
+                }
             }
+        }
+    }
+    if (clearDialog) AlertDialog(onDismissRequest = { clearDialog = false }, title = { Text("Clear execution history?") }, text = { Text("This removes local history records. Your SMS rules will not be deleted.") }, confirmButton = { TextButton(onClick = { items = emptyList(); clearDialog = false }) { Text("Clear") } }, dismissButton = { TextButton(onClick = { clearDialog = false }) { Text("Cancel") } })
+}
+
+@Composable
+private fun HistoryEntry(item: HistoryItem, onClick: () -> Unit) {
+    val (icon, color, label) = when (item.status) {
+        HistoryFilter.SENT -> Triple(Icons.Filled.CheckCircle, MaterialTheme.colorScheme.primary, "SMS sent successfully")
+        HistoryFilter.FAILED -> Triple(Icons.Filled.Error, MaterialTheme.colorScheme.error, "Failed to send")
+        HistoryFilter.BLOCKED -> Triple(Icons.Filled.Warning, MaterialTheme.colorScheme.tertiary, "Blocked")
+        HistoryFilter.MATCHED -> Triple(Icons.Filled.Rule, MaterialTheme.colorScheme.secondary, "Rule matched")
+        HistoryFilter.ALL -> Triple(Icons.Filled.History, MaterialTheme.colorScheme.onSurfaceVariant, "Activity")
+    }
+    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = color); Spacer(Modifier.width(8.dp)); Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            Text(label, color = color, fontWeight = FontWeight.Medium)
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Sms, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Text("From: ${item.sender}") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Send, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Text("To: ${item.destination}") }
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Schedule, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Text(item.time, style = MaterialTheme.typography.bodySmall) }
+            if (item.detail.isNotBlank()) Text(item.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
     }
 }
 
 @Composable
-private fun HistoryEntry(title: String, result: String, time: String, detail: String, color: Color, onClick: () -> Unit) {
-    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
-            Surface(Modifier.width(12.dp).height(12.dp).padding(top = 3.dp), shape = MaterialTheme.shapes.extraSmall, color = color) {}
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(result, color = color, style = MaterialTheme.typography.bodyMedium)
-                Text(time, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
+private fun CompactBanner(message: String, action: String?, color: Color, onAction: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Warning, null, tint = color); Spacer(Modifier.width(8.dp)); Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall); if (action != null) TextButton(onClick = onAction) { Text(action) } }
 }
 
 @Composable
