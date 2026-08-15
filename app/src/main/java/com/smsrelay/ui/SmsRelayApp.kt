@@ -18,9 +18,24 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Message
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Rule
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -28,10 +43,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -53,6 +70,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,6 +83,8 @@ private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED }
 fun SmsRelayApp() {
     var screen by remember { mutableStateOf(AppScreen.RULES) }
     var automationEnabled by remember { mutableStateOf(true) }
+    var receiveAllowed by remember { mutableStateOf(false) }
+    var sendAllowed by remember { mutableStateOf(false) }
     var deleteDialogVisible by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -84,6 +104,9 @@ fun SmsRelayApp() {
                 onCreate = { screen = AppScreen.EDITOR },
                 onEdit = { screen = AppScreen.EDITOR },
                 onDelete = { deleteDialogVisible = true },
+                receiveAllowed = receiveAllowed,
+                sendAllowed = sendAllowed,
+                onOpenPermissions = { screen = AppScreen.ONBOARDING },
             )
             AppScreen.HISTORY -> HistoryScreen(innerPadding, onOpenDetails = { screen = AppScreen.DETAILS })
             AppScreen.SETTINGS -> SettingsScreen(
@@ -98,7 +121,13 @@ fun SmsRelayApp() {
             )
             AppScreen.TESTER -> RuleTesterScreen(onBack = { screen = AppScreen.EDITOR })
             AppScreen.DETAILS -> ExecutionDetailsScreen(onBack = { screen = AppScreen.HISTORY })
-            AppScreen.ONBOARDING -> PermissionOnboardingScreen(onBack = { screen = AppScreen.SETTINGS })
+            AppScreen.ONBOARDING -> PermissionOnboardingScreen(
+                receiveAllowed = receiveAllowed,
+                sendAllowed = sendAllowed,
+                onReceiveAllowed = { receiveAllowed = true },
+                onSendAllowed = { sendAllowed = true },
+                onBack = { screen = AppScreen.SETTINGS },
+            )
         }
     }
 
@@ -118,7 +147,7 @@ fun SmsRelayApp() {
 @Composable
 private fun MainNavigation(selected: AppScreen, onSelect: (AppScreen) -> Unit) {
     NavigationBar {
-        NavigationBarItem(selected == AppScreen.RULES, { onSelect(AppScreen.RULES) }, icon = { Icon(Icons.Filled.List, "Rules") }, label = { Text("Rules") })
+        NavigationBarItem(selected == AppScreen.RULES, { onSelect(AppScreen.RULES) }, icon = { Icon(Icons.Filled.Rule, "Rules") }, label = { Text("Rules") })
         NavigationBarItem(selected == AppScreen.HISTORY, { onSelect(AppScreen.HISTORY) }, icon = { Icon(Icons.Filled.History, "History") }, label = { Text("History") })
         NavigationBarItem(selected == AppScreen.SETTINGS, { onSelect(AppScreen.SETTINGS) }, icon = { Icon(Icons.Filled.Settings, "Settings") }, label = { Text("Settings") })
     }
@@ -132,10 +161,15 @@ private fun RulesScreen(
     onCreate: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    receiveAllowed: Boolean,
+    sendAllowed: Boolean,
+    onOpenPermissions: () -> Unit,
 ) {
     Scaffold(
         topBar = { AppTopBar(title = "SMS Rules") },
-        floatingActionButton = { Button(onClick = onCreate) { Text("＋  New rule") } },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(onClick = onCreate, icon = { Icon(Icons.Filled.Add, null) }, text = { Text("Add Rule") })
+        },
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(contentPadding).padding(padding)
@@ -145,9 +179,13 @@ private fun RulesScreen(
             Spacer(Modifier.height(20.dp))
             AutomationCard(automationEnabled, onAutomationChanged)
             Spacer(Modifier.height(20.dp))
+            PermissionStatusCard(receiveAllowed, sendAllowed, onOpenPermissions)
+            Spacer(Modifier.height(20.dp))
             Text("Your rules", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
-            RuleCard(onEdit, onDelete)
+            RuleCard("Bank OTP Forward", "+91 98765 43210", "OTP\\s*is\\s*(\\d{6})", "••••••7890", onEdit, onDelete)
+            Spacer(Modifier.height(12.dp))
+            RuleCard("Bank Credit Alert", "AD-HDFCBK", "credited.*INR...", "••••••4321", onEdit, onDelete)
             Spacer(Modifier.height(96.dp))
         }
     }
@@ -170,32 +208,68 @@ private fun AutomationCard(enabled: Boolean, onCheckedChange: (Boolean) -> Unit)
 }
 
 @Composable
-private fun RuleCard(onEdit: () -> Unit, onDelete: () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
+private fun PermissionStatusCard(receiveAllowed: Boolean, sendAllowed: Boolean, onOpenPermissions: () -> Unit) {
+    val ready = receiveAllowed && sendAllowed
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (ready) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Bank Credit Alert", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    StatusPill("Enabled", MaterialTheme.colorScheme.primary)
-                }
-                Switch(checked = true, onCheckedChange = {})
-                TextButton(onClick = onEdit) { Text("Edit") }
+                Icon(if (ready) Icons.Filled.CheckCircle else Icons.Filled.Warning, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (ready) "SMS automation ready" else "SMS permissions required", fontWeight = FontWeight.SemiBold)
             }
-            RuleValue("Incoming", "AD-HDFCBK")
-            RuleValue("Pattern", "credited.*INR\\s*([\\d,.]+)", mono = true)
-            RuleValue("Send to", "••••••3210")
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text("Today, 8:42 PM · Sent", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) { Text("More") }
+            if (!ready) {
+                Text("Receive SMS: ${if (receiveAllowed) "Granted" else "Not granted"}")
+                Text("Send SMS: ${if (sendAllowed) "Granted" else "Not granted"}")
+                OutlinedButton(onClick = onOpenPermissions) { Text("Configure Permissions") }
+            } else {
+                Text("Both permissions are granted and rules can process incoming messages.", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
 
 @Composable
-private fun RuleValue(label: String, value: String, mono: Boolean = false) {
+private fun RuleCard(title: String, sender: String, pattern: String, destination: String, onEdit: () -> Unit, onDelete: () -> Unit) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Sms, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    StatusPill("Enabled", MaterialTheme.colorScheme.primary)
+                }
+                Switch(checked = true, onCheckedChange = {})
+                IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Edit rule") }
+                IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Delete rule") }
+            }
+            RuleValue("Incoming", sender, icon = Icons.Filled.Phone)
+            RuleValue("Pattern", pattern, mono = true, icon = Icons.Filled.FilterAlt)
+            RuleValue("Send to", destination, icon = Icons.Filled.Send)
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            Text("Today, 8:42 PM · Sent", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+            IconButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Filled.MoreVert, "More options") }
+        }
+    }
+}
+
+@Composable
+private fun RuleValue(label: String, value: String, mono: Boolean = false, icon: ImageVector? = null) {
     Spacer(Modifier.height(10.dp))
-    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (icon != null) Icon(icon, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 @Composable
@@ -270,6 +344,7 @@ private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
             }
             Surface(shadowElevation = 8.dp) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(onClick = onBack, modifier = Modifier.weight(0.8f)) { Text("Cancel") }
                     OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f)) { Text("Test Rule") }
                     Button(onClick = onBack, modifier = Modifier.weight(1f), enabled = patternError == null && (anyNumber || incomingNumber.isNotBlank()) && destination.isNotBlank() && message.isNotBlank()) { Text("Save Rule") }
                 }
@@ -425,14 +500,18 @@ private fun ExecutionDetailsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun PermissionOnboardingScreen(onBack: () -> Unit) {
-    var receiveAllowed by remember { mutableStateOf(false) }
-    var sendAllowed by remember { mutableStateOf(false) }
-    Scaffold(topBar = { AppTopBar("Set up SMS automation", onBack) }) { padding ->
+private fun PermissionOnboardingScreen(
+    receiveAllowed: Boolean,
+    sendAllowed: Boolean,
+    onReceiveAllowed: () -> Unit,
+    onSendAllowed: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Scaffold(topBar = { AppTopBar("SMS Permissions", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("SMS Rule Relay needs access to incoming SMS messages so it can evaluate your rules, and permission to send SMS when a rule matches.", style = MaterialTheme.typography.bodyLarge)
-            PermissionCard("Receive SMS", "Incoming message access", receiveAllowed) { receiveAllowed = true }
-            PermissionCard("Send SMS", "Send a new SMS after a matching rule", sendAllowed) { sendAllowed = true }
+            PermissionCard(Icons.Filled.Inbox, "Receive SMS", "Required to detect new incoming SMS messages and check them against your rules.", receiveAllowed, onReceiveAllowed)
+            PermissionCard(Icons.Filled.Send, "Send SMS", "Required to automatically send an SMS when a rule matches.", sendAllowed, onSendAllowed)
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Your messages stay on your device", fontWeight = FontWeight.SemiBold)
@@ -445,9 +524,11 @@ private fun PermissionOnboardingScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun PermissionCard(title: String, description: String, granted: Boolean, onAllow: () -> Unit) {
+private fun PermissionCard(icon: ImageVector, title: String, description: String, granted: Boolean, onAllow: () -> Unit) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(description, style = MaterialTheme.typography.bodySmall)
