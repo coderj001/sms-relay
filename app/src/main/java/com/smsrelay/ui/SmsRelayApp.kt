@@ -200,44 +200,67 @@ private fun RuleValue(label: String, value: String, mono: Boolean = false) {
 
 @Composable
 private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
-    var name by remember { mutableStateOf("Bank Credit Alert") }
-    var sender by remember { mutableStateOf("AD-HDFCBK") }
-    var pattern by remember { mutableStateOf("credited.*INR\\s*([\\d,.]+)") }
-    var destination by remember { mutableStateOf("+91 98765 43210") }
-    var message by remember { mutableStateOf("Payment received: ₹{{match_1}}\nFrom: {{sender}}") }
+    var incomingNumber by remember { mutableStateOf("+91 98765 43210") }
+    var anyNumber by remember { mutableStateOf(false) }
+    var pattern by remember { mutableStateOf("OTP\\s*is\\s*(\\d{6})") }
+    var destination by remember { mutableStateOf("+91 91234 56789") }
+    var message by remember { mutableStateOf("OTP received: {{match_1}}") }
     var enabled by remember { mutableStateOf(true) }
+    var regexTested by remember { mutableStateOf(false) }
     val patternError = remember(pattern) { runCatching { Regex(pattern) }.exceptionOrNull()?.message }
-    val broadRule = sender.isBlank() && pattern.trim() == ".*"
+    val sampleMatch = remember(pattern) { runCatching { Regex(pattern).find("OTP is 123456") }.getOrNull() }
+    val broadRule = anyNumber && pattern.trim() == ".*"
 
-    Scaffold(topBar = { AppTopBar("Create Rule", onBack) }) { padding ->
+    Scaffold(topBar = { AppTopBar("Create SMS Rule", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Column(
                 modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                SectionTitle("Basic information")
-                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Rule name") }, singleLine = true)
-                SectionTitle("When this SMS arrives")
-                OutlinedTextField(sender, { sender = it }, Modifier.fillMaxWidth(), label = { Text("Sender") }, placeholder = { Text("Any sender") }, supportingText = { Text("Leave empty to match SMS from any sender.") }, singleLine = true)
+                FlowStep("1", "Receive SMS from")
+                OutlinedTextField(
+                    value = incomingNumber,
+                    onValueChange = { incomingNumber = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Incoming phone number") },
+                    placeholder = { Text("Any number") },
+                    enabled = !anyNumber,
+                    supportingText = { Text("Only SMS messages received from this number will be checked.") },
+                    singleLine = true,
+                )
+                FilterChip(selected = anyNumber, onClick = { anyNumber = !anyNumber }, label = { Text("Any number") })
+                FlowArrow()
+                FlowStep("2", "Match message with regex")
                 OutlinedTextField(
                     value = pattern,
-                    onValueChange = { pattern = it },
+                    onValueChange = { pattern = it; regexTested = false },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Message pattern  ·  Regex") },
+                    label = { Text("Message Regex  ·  Regex") },
                     textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
                     isError = patternError != null,
-                    supportingText = { Text(patternError?.let { "Invalid regular expression: $it" } ?: "The rule runs when this pattern appears in the incoming SMS.") },
+                    supportingText = { Text(patternError?.let { "Invalid regular expression: $it" } ?: "The SMS will trigger this rule only when the message matches this pattern.") },
                 )
-                TextButton(onClick = onTest) { Text("Test pattern") }
-                SectionTitle("Then send an SMS")
-                OutlinedTextField(destination, { destination = it }, Modifier.fillMaxWidth(), label = { Text("Destination number") }, singleLine = true)
-                OutlinedTextField(message, { message = it }, Modifier.fillMaxWidth(), label = { Text("Message") }, minLines = 4, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
+                TextButton(onClick = { regexTested = true }, enabled = patternError == null) { Text("Test Regex") }
+                if (regexTested) RegexResultCard(match = sampleMatch)
+                FlowArrow()
+                FlowStep("3", "Send SMS to")
+                OutlinedTextField(
+                    value = destination,
+                    onValueChange = { destination = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Forward to phone number") },
+                    supportingText = { Text("When the incoming SMS matches, an SMS will automatically be sent to this number.") },
+                    singleLine = true,
+                )
+                FlowArrow()
+                FlowStep("4", "Outgoing message")
+                OutlinedTextField(message, { message = it }, Modifier.fillMaxWidth(), label = { Text("Message to send") }, minLines = 4, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
                 Text("Available variables", style = MaterialTheme.typography.labelLarge)
                 VariableChips(onInsert = { message += it })
-                SectionTitle("Rule status")
+                HorizontalDivider(Modifier.padding(top = 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Enable this rule", style = MaterialTheme.typography.titleMedium)
+                        Text("Enable Rule", style = MaterialTheme.typography.titleMedium)
                         Text("Enabled rules can automatically send SMS messages.", style = MaterialTheme.typography.bodySmall)
                     }
                     Switch(enabled, { enabled = it })
@@ -247,8 +270,39 @@ private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
             }
             Surface(shadowElevation = 8.dp) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("Cancel") }
-                    Button(onClick = onBack, modifier = Modifier.weight(1f), enabled = patternError == null && name.isNotBlank() && destination.isNotBlank() && message.isNotBlank()) { Text("Save rule") }
+                    OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f)) { Text("Test Rule") }
+                    Button(onClick = onBack, modifier = Modifier.weight(1f), enabled = patternError == null && (anyNumber || incomingNumber.isNotBlank()) && destination.isNotBlank() && message.isNotBlank()) { Text("Save Rule") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlowStep(step: String, title: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        StatusPill(step, MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(8.dp))
+        Text(title.uppercase(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun FlowArrow() {
+    Text("↓", modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineSmall)
+}
+
+@Composable
+private fun RegexResultCard(match: MatchResult?) {
+    val matched = match != null
+    Card(colors = CardDefaults.cardColors(containerColor = if (matched) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(if (matched) "✓ Pattern matched" else "Pattern did not match", fontWeight = FontWeight.SemiBold)
+            Text("Sample checked: OTP is 123456", style = MaterialTheme.typography.bodySmall)
+            if (matched && match.groups.size > 1) {
+                Text("Captured groups", style = MaterialTheme.typography.labelMedium)
+                match.groups.drop(1).forEachIndexed { index, group ->
+                    CodeText("match_" + (index + 1) + " = " + group?.value.orEmpty())
                 }
             }
         }
@@ -258,7 +312,7 @@ private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
 @Composable
 private fun VariableChips(onInsert: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("{{message}}", "{{sender}}", "{{match_0}}", "{{match_1}}", "{{timestamp}}").forEach { variable ->
+        listOf("{{sender}}", "{{message}}", "{{match_0}}", "{{match_1}}").forEach { variable ->
             AssistChip(onClick = { onInsert(variable) }, label = { Text(variable, fontFamily = FontFamily.Monospace) })
         }
     }
@@ -276,8 +330,8 @@ private fun WarningCard() {
 
 @Composable
 private fun RuleTesterScreen(onBack: () -> Unit) {
-    var sender by remember { mutableStateOf("AD-HDFCBK") }
-    var body by remember { mutableStateOf("Your account has been credited INR 5,000.00.") }
+    var sender by remember { mutableStateOf("+91 98765 43210") }
+    var body by remember { mutableStateOf("OTP is 123456") }
     var tested by remember { mutableStateOf(false) }
     Scaffold(topBar = { AppTopBar("Test Rule", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -296,7 +350,7 @@ private fun RuleTesterScreen(onBack: () -> Unit) {
 
 @Composable
 private fun TestResultCard(sender: String, message: String) {
-    val matched = sender.trim().equals("AD-HDFCBK", ignoreCase = true) && Regex("credited.*INR\\s*([\\d,.]+)", RegexOption.IGNORE_CASE).containsMatchIn(message)
+    val matched = sender.trim() == "+91 98765 43210" && Regex("OTP\\s*is\\s*(\\d{6})", RegexOption.IGNORE_CASE).containsMatchIn(message)
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (matched) "Rule matched" else "Rule did not match", style = MaterialTheme.typography.titleLarge, color = if (matched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
@@ -304,14 +358,14 @@ private fun TestResultCard(sender: String, message: String) {
                 Text("Sender  ·  Matched")
                 Text("Regex  ·  Matched")
                 Text("Captured values", style = MaterialTheme.typography.labelLarge)
-                CodeText("match_0: credited INR 5,000.00")
-                CodeText("match_1: 5,000.00")
+                CodeText("match_0: OTP is 123456")
+                CodeText("match_1: 123456")
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
-                CodeText("Payment received: ₹5,000.00\nFrom: AD-HDFCBK")
+                CodeText("OTP received: 123456")
             } else {
-                Text("Sender condition: ${if (sender.equals("AD-HDFCBK", true)) "Matched" else "Did not match"}")
-                Text("Regex: ${if (message.contains("credited", true)) "Matched" else "Did not match"}")
+                Text(if (sender == "+91 98765 43210") "Sender condition: Matched" else "Sender condition: Did not match")
+                Text(if (message.contains("OTP", true)) "Regex: Matched" else "Regex: Did not match")
             }
         }
     }
