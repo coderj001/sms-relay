@@ -1,5 +1,6 @@
 <resources>
-    <style name="Theme.SmsRelay" parent="@android:style/Theme.DeviceDefault.DayNight.NoActionBar">
+    <!-- Keep the platform theme API 21-compatible; Compose supplies the app's light/dark styling. -->
+    <style name="Theme.SmsRelay" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
