@@ -4,15 +4,23 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
+import com.smsrelay.sms.ProcessIncomingSmsUseCase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
-/**
- * Platform entry point only. Processing is deliberately not connected until the
- * persistent rule repository and safety controls are implemented.
- */
 class SmsBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
-        // Keep the core invariant intact: no configured, enabled rule means no send.
+        val sms = IncomingSmsParser.parse(intent) ?: return
+        val pendingResult = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                ProcessIncomingSmsUseCase(context.applicationContext).process(sms)
+            } finally {
+                pendingResult.finish()
+            }
+        }
     }
 }
-
