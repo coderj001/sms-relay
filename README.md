@@ -94,7 +94,7 @@ The core matching, template, deduplication, and rate-limit logic stays independe
 - Android SDK Platform 35 and Build-Tools 35.x
 - Android Studio (recommended) or a compatible Gradle installation
 
-Open the repository root in Android Studio to sync the project. The Gradle wrapper is intentionally not committed because build tooling was not downloaded during repository setup.
+Open the repository root in Android Studio to sync the project. The project is pinned to Gradle 8.10.2 through gradle/wrapper/gradle-wrapper.properties; Android Studio may download that distribution and project dependencies during the first sync.
 
 ### Commands
 
