@@ -45,7 +45,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -59,7 +58,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -85,9 +83,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
 private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED, MATCHED }
+private val Success = Color(0xFF4A9E5C)
 
 @Composable
 fun SmsRelayApp() {
@@ -104,7 +105,6 @@ fun SmsRelayApp() {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
-        snackbarHost = { SnackbarHost(hostState = remember { androidx.compose.material3.SnackbarHostState() }) },
         bottomBar = {
             if (screen == AppScreen.RULES || screen == AppScreen.HISTORY || screen == AppScreen.SETTINGS) {
                 MainNavigation(selected = screen, onSelect = { screen = it })
@@ -161,11 +161,20 @@ fun SmsRelayApp() {
 
 @Composable
 private fun MainNavigation(selected: AppScreen, onSelect: (AppScreen) -> Unit) {
-    NavigationBar {
-        NavigationBarItem(selected == AppScreen.RULES, { onSelect(AppScreen.RULES) }, icon = { Icon(Icons.Filled.Rule, "Rules") }, label = { Text("Rules") })
-        NavigationBarItem(selected == AppScreen.HISTORY, { onSelect(AppScreen.HISTORY) }, icon = { Icon(Icons.Filled.History, "History") }, label = { Text("History") })
-        NavigationBarItem(selected == AppScreen.SETTINGS, { onSelect(AppScreen.SETTINGS) }, icon = { Icon(Icons.Filled.Settings, "Settings") }, label = { Text("Settings") })
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
+        NavigationBarItem(selected == AppScreen.RULES, { onSelect(AppScreen.RULES) }, icon = {}, label = { NavigationLabel("Rules", selected == AppScreen.RULES) })
+        NavigationBarItem(selected == AppScreen.HISTORY, { onSelect(AppScreen.HISTORY) }, icon = {}, label = { NavigationLabel("History", selected == AppScreen.HISTORY) })
+        NavigationBarItem(selected == AppScreen.SETTINGS, { onSelect(AppScreen.SETTINGS) }, icon = {}, label = { NavigationLabel("Settings", selected == AppScreen.SETTINGS) })
     }
+}
+
+@Composable
+private fun NavigationLabel(label: String, selected: Boolean) {
+    Text(
+        text = if (selected) "[ ${label.uppercase()} ]" else label.uppercase(),
+        style = MaterialTheme.typography.labelMedium,
+        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -192,19 +201,18 @@ private fun RulesScreen(
             modifier = Modifier.fillMaxSize().padding(contentPadding).padding(padding)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Text("Automatically send an SMS when an incoming message matches your conditions.", style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(20.dp))
+            Text("02 ACTIVE", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text("ENABLED RELAY RULES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(16.dp))
+            Text("Automatically relay an SMS only when its sender and message match a rule.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(32.dp))
             AutomationCard(automationEnabled, onAutomationChanged)
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(24.dp))
             PermissionStatusCard(receiveAllowed, sendAllowed, onOpenPermissions)
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(32.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Your rules", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                FilledTonalButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Add Rule")
-                }
+                Text("YOUR RULES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                TextButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("+ ADD", style = MaterialTheme.typography.labelLarge) }
             }
             Spacer(Modifier.height(8.dp))
             RuleCard("Bank OTP Forward", "+91 98765 43210", "OTP\\s*is\\s*(\\d{6})", "••••••7890", otpRuleEnabled, { otpRuleEnabled = it }, onEdit, onDelete)
@@ -217,14 +225,16 @@ private fun RulesScreen(
 
 @Composable
 private fun AutomationCard(enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+    Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Automation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text(if (enabled) "Enabled rules can respond to new incoming SMS messages." else "Incoming messages will not trigger any rules.", style = MaterialTheme.typography.bodyMedium)
+                Text("MASTER AUTOMATION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Text(if (enabled) "ARMED" else "PAUSED", style = MaterialTheme.typography.headlineSmall)
+                Text(if (enabled) "Matching messages can be relayed." else "No incoming message will be relayed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(if (enabled) "ON" else "OFF", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(if (enabled) "ON" else "OFF", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
                 Switch(checked = enabled, onCheckedChange = onCheckedChange)
             }
         }
@@ -236,22 +246,19 @@ private fun PermissionStatusCard(receiveAllowed: Boolean, sendAllowed: Boolean, 
     val ready = receiveAllowed && sendAllowed
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (ready) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
-        ),
+        border = BorderStroke(1.dp, if (ready) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.tertiary),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (ready) Icons.Filled.CheckCircle else Icons.Filled.Warning, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (ready) "SMS automation ready" else "SMS permissions required", fontWeight = FontWeight.SemiBold)
+                Text(if (ready) "[ SYSTEM READY ]" else "[ ACTION REQUIRED ]", style = MaterialTheme.typography.labelLarge, color = if (ready) Success else MaterialTheme.colorScheme.tertiary)
             }
             if (!ready) {
-                Text("Receive SMS: ${if (receiveAllowed) "Granted" else "Not granted"}")
-                Text("Send SMS: ${if (sendAllowed) "Granted" else "Not granted"}")
-                OutlinedButton(onClick = onOpenPermissions) { Text("Configure Permissions") }
+                DetailRow("RECEIVE SMS", if (receiveAllowed) "GRANTED" else "NOT GRANTED")
+                DetailRow("SEND SMS", if (sendAllowed) "GRANTED" else "NOT GRANTED")
+                OutlinedButton(onClick = onOpenPermissions) { Text("CONFIGURE", style = MaterialTheme.typography.labelLarge) }
             } else {
-                Text("Both permissions are granted and rules can process incoming messages.", style = MaterialTheme.typography.bodySmall)
+                Text("Both permissions are granted. Rules can process incoming messages.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -268,16 +275,14 @@ private fun RuleCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Sms, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
                         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     }
-                    StatusPill(if (enabled) "Enabled" else "Disabled", if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    StatusPill(if (enabled) "Enabled" else "Disabled", if (enabled) Success else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = enabled, onCheckedChange = onEnabledChange)
                 IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Edit rule") }
@@ -287,7 +292,7 @@ private fun RuleCard(
             RuleValue("Pattern", pattern, mono = true, icon = Icons.Filled.FilterAlt)
             RuleValue("Send to", destination, icon = Icons.Filled.Send)
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text("Today, 8:42 PM · Sent", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+            Text("[ SENT ]  TODAY, 8:42 PM", color = Success, style = MaterialTheme.typography.labelMedium)
             IconButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Filled.MoreVert, "More options") }
         }
     }
@@ -297,9 +302,8 @@ private fun RuleCard(
 private fun RuleValue(label: String, value: String, mono: Boolean = false, icon: ImageVector? = null) {
     Spacer(Modifier.height(10.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (icon != null) Icon(icon, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Column {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -375,7 +379,7 @@ private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
                 if (broadRule) WarningCard()
                 Spacer(Modifier.height(12.dp))
             }
-            Surface(shadowElevation = 8.dp) {
+            Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TextButton(onClick = onBack, modifier = Modifier.weight(0.8f)) { Text("Cancel") }
                     OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f)) { Text("Test Rule") }
@@ -403,9 +407,12 @@ private fun FlowArrow() {
 @Composable
 private fun RegexResultCard(match: MatchResult?) {
     val matched = match != null
-    Card(colors = CardDefaults.cardColors(containerColor = if (matched) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+    Card(
+        border = BorderStroke(1.dp, if (matched) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.error),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(if (matched) "✓ Pattern matched" else "Pattern did not match", fontWeight = FontWeight.SemiBold)
+            Text(if (matched) "[ PATTERN MATCHED ]" else "[ NO MATCH ]", style = MaterialTheme.typography.labelLarge, color = if (matched) Success else MaterialTheme.colorScheme.error)
             Text("Sample checked: OTP is 123456", style = MaterialTheme.typography.bodySmall)
             if (matched && match.groups.size > 1) {
                 Text("Captured groups", style = MaterialTheme.typography.labelMedium)
@@ -428,7 +435,7 @@ private fun VariableChips(onInsert: (String) -> Unit) {
 
 @Composable
 private fun WarningCard() {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)) {
+    Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(14.dp)) {
             Text("This rule may match almost every SMS", fontWeight = FontWeight.SemiBold)
             Text("Review the destination and pattern before enabling it.", style = MaterialTheme.typography.bodySmall)
@@ -443,8 +450,8 @@ private fun RuleTesterScreen(onBack: () -> Unit) {
     var tested by remember { mutableStateOf(false) }
     Scaffold(topBar = { AppTopBar("Test Rule", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-                Text("Testing does not send a real SMS.", Modifier.padding(14.dp), fontWeight = FontWeight.SemiBold)
+            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Text("[ TEST MODE ]  Testing never sends a real SMS.", Modifier.padding(14.dp), style = MaterialTheme.typography.labelMedium)
             }
             SectionTitle("Sample sender")
             OutlinedTextField(sender, { sender = it }, Modifier.fillMaxWidth(), singleLine = true)
@@ -459,9 +466,9 @@ private fun RuleTesterScreen(onBack: () -> Unit) {
 @Composable
 private fun TestResultCard(sender: String, message: String) {
     val matched = sender.trim() == "+91 98765 43210" && Regex("OTP\\s*is\\s*(\\d{6})", RegexOption.IGNORE_CASE).containsMatchIn(message)
-    ElevatedCard(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (matched) "Rule matched" else "Rule did not match", style = MaterialTheme.typography.titleLarge, color = if (matched) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+            Text(if (matched) "RULE MATCHED" else "RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = if (matched) Success else MaterialTheme.colorScheme.error)
             if (matched) {
                 Text("Sender  ·  Matched")
                 Text("Regex  ·  Matched")
@@ -536,21 +543,21 @@ private fun HistoryScreen(contentPadding: PaddingValues, automationEnabled: Bool
 
 @Composable
 private fun HistoryEntry(item: HistoryItem, onClick: () -> Unit) {
-    val (icon, color, label) = when (item.status) {
-        HistoryFilter.SENT -> Triple(Icons.Filled.CheckCircle, MaterialTheme.colorScheme.primary, "SMS sent successfully")
+    val (_, color, label) = when (item.status) {
+        HistoryFilter.SENT -> Triple(Icons.Filled.CheckCircle, Success, "SMS sent successfully")
         HistoryFilter.FAILED -> Triple(Icons.Filled.Error, MaterialTheme.colorScheme.error, "Failed to send")
         HistoryFilter.BLOCKED -> Triple(Icons.Filled.Warning, MaterialTheme.colorScheme.tertiary, "Blocked")
         HistoryFilter.MATCHED -> Triple(Icons.Filled.Rule, MaterialTheme.colorScheme.secondary, "Rule matched")
         HistoryFilter.ALL -> Triple(Icons.Filled.History, MaterialTheme.colorScheme.onSurfaceVariant, "Activity")
     }
-    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = color); Spacer(Modifier.width(8.dp)); Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-            Text(label, color = color, fontWeight = FontWeight.Medium)
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Sms, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Text("From: ${item.sender}") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Send, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Text("To: ${item.destination}") }
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Schedule, null, modifier = Modifier.width(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Text(item.time, style = MaterialTheme.typography.bodySmall) }
-            if (item.detail.isNotBlank()) Text(item.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("[ ${label.uppercase()} ]", color = color, style = MaterialTheme.typography.labelMedium)
+            DetailRow("FROM", item.sender)
+            DetailRow("TO", item.destination)
+            Text(item.time.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (item.detail.isNotBlank()) Text("[ ERROR: ${item.detail.uppercase()} ]", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -604,10 +611,10 @@ private fun PermissionOnboardingScreen(
             PermissionCard(Icons.Filled.Send, "Send SMS", "Required to automatically send an SMS when a rule matches.", sendAllowed) {
                 sendPermissionLauncher.launch(Manifest.permission.SEND_SMS)
             }
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+            Card(border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Your messages stay on your device", fontWeight = FontWeight.SemiBold)
-                    Text("SMS Rule Relay does not require a cloud account or upload your SMS messages.")
+                    Text("[ LOCAL-ONLY ]", style = MaterialTheme.typography.labelLarge)
+                    Text("Your messages remain on this device. No cloud account or upload is required.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Button(onClick = onBack, modifier = Modifier.fillMaxWidth(), enabled = receiveAllowed && sendAllowed) { Text("Continue") }
@@ -617,7 +624,7 @@ private fun PermissionOnboardingScreen(
 
 @Composable
 private fun PermissionCard(icon: ImageVector, title: String, description: String, granted: Boolean, onAllow: () -> Unit) {
-    ElevatedCard(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(12.dp))
@@ -660,7 +667,10 @@ private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boo
 
 @Composable
 private fun SettingGroup(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary); ElevatedCard(Modifier.fillMaxWidth()) { Column { content() } } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column { content() } }
+    }
 }
 
 @Composable
@@ -685,8 +695,8 @@ private fun SettingRow(title: String, value: String, onClick: (() -> Unit)? = nu
 @Composable
 private fun AppTopBar(title: String, onBack: (() -> Unit)? = null) {
     TopAppBar(
-        title = { Text(title, fontWeight = FontWeight.SemiBold) },
-        navigationIcon = { if (onBack != null) TextButton(onClick = onBack) { Text("Back") } },
+        title = { Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        navigationIcon = { if (onBack != null) TextButton(onClick = onBack) { Text("< BACK", style = MaterialTheme.typography.labelMedium) } },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }
@@ -696,22 +706,22 @@ private fun SectionTitle(value: String) = Text(value, style = MaterialTheme.typo
 
 @Composable
 private fun StatusPill(value: String, color: Color) {
-    Surface(color = color.copy(alpha = 0.14f), shape = MaterialTheme.shapes.small, modifier = Modifier.padding(top = 6.dp).wrapContentWidth()) {
-        Text(value, color = color, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, color), modifier = Modifier.padding(top = 6.dp).wrapContentWidth()) {
+        Text(value.uppercase(), color = color, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
 
 @Composable
 private fun DetailSection(title: String, content: @Composable () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, style = MaterialTheme.typography.titleMedium); ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() } } }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant); Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() } } }
 }
 
 @Composable
 private fun DetailRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth()) { Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, fontWeight = FontWeight.Medium) }
+    Row(Modifier.fillMaxWidth()) { Text(label.uppercase(), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium) }
 }
 
 @Composable
 private fun CodeText(value: String) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small) { Text(value, Modifier.padding(12.dp), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium) }
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Text(value, Modifier.padding(12.dp), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium) }
 }
