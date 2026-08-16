@@ -89,7 +89,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.smsrelay.data.SmsRelayDatabaseProvider
 import com.smsrelay.data.SmsRuleEntity
+import com.smsrelay.domain.model.IncomingSms
+import com.smsrelay.domain.model.RuleMatch
+import com.smsrelay.domain.template.TemplateRenderer
+import com.smsrelay.domain.template.TemplateResult
 import kotlinx.coroutines.launch
+import java.util.regex.Pattern
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
 private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED, MATCHED }
@@ -456,7 +461,7 @@ private fun RuleEditorScreen(
                 FlowStep("4", "Outgoing message")
                 OutlinedTextField(message, { message = it }, Modifier.fillMaxWidth(), label = { Text("Message to send") }, minLines = 4, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
                 Text("Available variables", style = MaterialTheme.typography.labelLarge)
-                VariableChips(onInsert = { message += it })
+                VariableChips(pattern = pattern, onInsert = { message += it })
                 HorizontalDivider(Modifier.padding(top = 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -514,11 +519,23 @@ private fun RegexResultCard(match: MatchResult?) {
 }
 
 @Composable
-private fun VariableChips(onInsert: (String) -> Unit) {
+private fun VariableChips(pattern: String, onInsert: (String) -> Unit) {
+    val variables = remember(pattern) { templateVariablesFor(pattern) }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("{{sender}}", "{{message}}", "{{match_0}}", "{{match_1}}").forEach { variable ->
+        variables.forEach { variable ->
             AssistChip(onClick = { onInsert(variable) }, label = { Text(variable, fontFamily = FontFamily.Monospace) })
         }
+    }
+}
+
+private fun templateVariablesFor(pattern: String): List<String> {
+    val captures = runCatching { Pattern.compile(pattern).matcher("").groupCount() }.getOrDefault(0)
+    return buildList {
+        add("{{sender}}")
+        add("{{message}}")
+        add("{{match_0}}")
+        repeat(captures) { add("{{match_${it + 1}}}") }
+        add("{{timestamp}}")
     }
 }
 
@@ -571,7 +588,18 @@ private fun TestResultCard(rule: RuleDraft, sender: String, message: String) {
                 }
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
-                CodeText(renderTestTemplate(rule.outputTemplate, sender, message, regexMatch))
+                val preview = TemplateRenderer().render(
+                    rule.outputTemplate,
+                    IncomingSms(sender, message, System.currentTimeMillis(), null),
+                    RuleMatch(regexMatch!!.value, regexMatch.groups.drop(1).map { it?.value }),
+                )
+                when (preview) {
+                    is TemplateResult.Success -> CodeText(preview.value)
+                    is TemplateResult.UnknownVariable -> Text(
+                        "Unknown variable: {{${preview.variable}}}",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             } else {
                 Text(if (senderMatched) "Sender condition: Matched" else "Sender condition: Did not match")
                 Text(if (regexMatch != null) "Regex: Matched" else "Regex: Did not match")
@@ -579,18 +607,6 @@ private fun TestResultCard(rule: RuleDraft, sender: String, message: String) {
         }
     }
 }
-
-private fun renderTestTemplate(template: String, sender: String, message: String, match: MatchResult?): String =
-    Regex("\\{\\{([a-zA-Z0-9_]+)}}").replace(template) { token ->
-        when (val variable = token.groupValues[1]) {
-            "sender" -> sender
-            "message" -> message
-            "match_0" -> match?.value.orEmpty()
-            else -> variable.removePrefix("match_").toIntOrNull()
-                ?.let { index -> match?.groups?.getOrNull(index)?.value.orEmpty() }
-                ?: token.value
-        }
-    }
 
 private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
 

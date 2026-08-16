@@ -5,14 +5,15 @@ import com.smsrelay.domain.model.RuleMatch
 
 class TemplateRenderer {
     fun render(template: String, sms: IncomingSms, match: RuleMatch): TemplateResult {
-        val values = mapOf(
-            "message" to sms.body,
-            "sender" to sms.sender.orEmpty(),
-            "match_0" to match.value,
-            "match_1" to match.groups.getOrNull(0).orEmpty(),
-            "match_2" to match.groups.getOrNull(1).orEmpty(),
-            "timestamp" to sms.receivedAt.toString(),
-        )
+        val values = buildMap {
+            put("message", sms.body)
+            put("sender", sms.sender.orEmpty())
+            put("match_0", match.value)
+            put("timestamp", sms.receivedAt.toString())
+            match.groups.forEachIndexed { index, value ->
+                put("match_${index + 1}", value.orEmpty())
+            }
+        }
         val unknown = VARIABLE.findAll(template)
             .map { it.groupValues[1] }
             .firstOrNull { it !in values }

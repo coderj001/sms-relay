@@ -16,4 +16,15 @@ class TemplateRendererTest {
 
         assertEquals(TemplateResult.Success("From BANK: 500/"), result)
     }
+
+    @Test
+    fun `renders every regex capture group`() {
+        val result = TemplateRenderer().render(
+            "{{match_1}}/{{match_2}}/{{match_3}}",
+            IncomingSms("BANK", "credit 500", 0, null),
+            RuleMatch("credit 500", listOf("one", "two", "three")),
+        )
+
+        assertEquals(TemplateResult.Success("one/two/three"), result)
+    }
 }
