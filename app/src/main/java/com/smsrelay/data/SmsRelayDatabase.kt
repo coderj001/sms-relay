@@ -7,6 +7,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Update
+import androidx.room.Delete
 
 @Entity(tableName = "sms_rules")
 data class SmsRuleEntity(
@@ -36,8 +38,20 @@ data class ExecutionLogEntity(
 
 @Dao
 interface SmsRelayDao {
+    @Query("SELECT * FROM sms_rules ORDER BY updatedAt DESC")
+    suspend fun allRules(): List<SmsRuleEntity>
+
     @Query("SELECT * FROM sms_rules WHERE enabled = 1")
     suspend fun enabledRules(): List<SmsRuleEntity>
+
+    @Insert
+    suspend fun insertRule(rule: SmsRuleEntity): Long
+
+    @Update
+    suspend fun updateRule(rule: SmsRuleEntity)
+
+    @Delete
+    suspend fun deleteRule(rule: SmsRuleEntity)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertExecutionLog(log: ExecutionLogEntity): Long

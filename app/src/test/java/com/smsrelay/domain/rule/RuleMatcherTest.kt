@@ -30,6 +30,18 @@ class RuleMatcherTest {
         assertTrue(matcher.evaluate(rule(regex = "["), sms()) is RuleEvaluation.InvalidPattern)
     }
 
+    @Test
+    fun `supports a custom regex with named and optional groups`() {
+        val evaluation = matcher.evaluate(
+            rule(regex = "(?i)ref-(?<reference>[A-Z]{2}\\d{4})(?:\\s+INR\\s*(\\d+(?:\\.\\d{2})?))?"),
+            sms().copy(body = "Payment REF-ab1234 INR 500.00"),
+        )
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(listOf("ab1234", "500.00"), evaluation.match.groups)
+    }
+
     private fun rule(sender: String? = null, regex: String = ".*") = SmsRule(
         id = 1,
         name = "Credit relay",

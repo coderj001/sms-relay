@@ -70,9 +70,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,10 +87,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.smsrelay.data.SmsRelayDatabaseProvider
+import com.smsrelay.data.SmsRuleEntity
+import kotlinx.coroutines.launch
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
 private enum class HistoryFilter { ALL, SENT, FAILED, BLOCKED, MATCHED }
 private val Success = Color(0xFF4A9E5C)
+private data class RuleDraft(
+    val name: String,
+    val senderFilter: String?,
+    val messageRegex: String,
+    val destinationNumber: String,
+    val outputTemplate: String,
+    val enabled: Boolean,
+)
 
 @Composable
 fun SmsRelayApp() {
@@ -96,13 +109,40 @@ fun SmsRelayApp() {
     var automationEnabled by remember { mutableStateOf(true) }
     var historyItems by remember { mutableStateOf(sampleHistoryItems()) }
     val context = LocalContext.current
+    val dao = remember(context) { SmsRelayDatabaseProvider.get(context).dao() }
+    val scope = rememberCoroutineScope()
+    var rules by remember { mutableStateOf<List<SmsRuleEntity>>(emptyList()) }
+    var editingRule by remember { mutableStateOf<SmsRuleEntity?>(null) }
+    var testerDraft by remember { mutableStateOf<RuleDraft?>(null) }
     var receiveAllowed by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED)
     }
     var sendAllowed by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED)
     }
-    var deleteDialogVisible by remember { mutableStateOf(false) }
+    var ruleToDelete by remember { mutableStateOf<SmsRuleEntity?>(null) }
+
+    LaunchedEffect(dao) { rules = dao.allRules() }
+
+    fun saveRule(existing: SmsRuleEntity?, draft: RuleDraft) {
+        scope.launch {
+            val now = System.currentTimeMillis()
+            val rule = SmsRuleEntity(
+                id = existing?.id ?: 0,
+                name = draft.name.trim(),
+                enabled = draft.enabled,
+                senderFilter = draft.senderFilter?.trim()?.takeIf { it.isNotEmpty() },
+                messageRegex = draft.messageRegex,
+                destinationNumber = draft.destinationNumber.trim(),
+                outputTemplate = draft.outputTemplate,
+                createdAt = existing?.createdAt ?: now,
+                updatedAt = now,
+            )
+            if (existing == null) dao.insertRule(rule) else dao.updateRule(rule)
+            rules = dao.allRules()
+            screen = AppScreen.RULES
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -117,9 +157,16 @@ fun SmsRelayApp() {
                 contentPadding = innerPadding,
                 automationEnabled = automationEnabled,
                 onAutomationChanged = { automationEnabled = it },
-                onCreate = { screen = AppScreen.EDITOR },
-                onEdit = { screen = AppScreen.EDITOR },
-                onDelete = { deleteDialogVisible = true },
+                rules = rules,
+                onCreate = { editingRule = null; screen = AppScreen.EDITOR },
+                onEdit = { editingRule = it; screen = AppScreen.EDITOR },
+                onDelete = { ruleToDelete = it },
+                onRuleEnabledChange = { rule, enabled ->
+                    scope.launch {
+                        dao.updateRule(rule.copy(enabled = enabled, updatedAt = System.currentTimeMillis()))
+                        rules = dao.allRules()
+                    }
+                },
                 receiveAllowed = receiveAllowed,
                 sendAllowed = sendAllowed,
                 onOpenPermissions = { screen = AppScreen.ONBOARDING },
@@ -140,10 +187,12 @@ fun SmsRelayApp() {
                 onOpenOnboarding = { screen = AppScreen.ONBOARDING },
             )
             AppScreen.EDITOR -> RuleEditorScreen(
+                rule = editingRule,
                 onBack = { screen = AppScreen.RULES },
-                onTest = { screen = AppScreen.TESTER },
+                onSave = { saveRule(editingRule, it) },
+                onTest = { testerDraft = it; screen = AppScreen.TESTER },
             )
-            AppScreen.TESTER -> RuleTesterScreen(onBack = { screen = AppScreen.EDITOR })
+            AppScreen.TESTER -> RuleTesterScreen(draft = testerDraft, onBack = { screen = AppScreen.EDITOR })
             AppScreen.DETAILS -> ExecutionDetailsScreen(onBack = { screen = AppScreen.HISTORY })
             AppScreen.ONBOARDING -> PermissionOnboardingScreen(
                 receiveAllowed = receiveAllowed,
@@ -155,15 +204,21 @@ fun SmsRelayApp() {
         }
     }
 
-    if (deleteDialogVisible) {
+    ruleToDelete?.let { rule ->
         AlertDialog(
-            onDismissRequest = { deleteDialogVisible = false },
+            onDismissRequest = { ruleToDelete = null },
             title = { Text("Delete this rule?") },
-            text = { Text("Bank Credit Alert will no longer run. This does not delete its history.") },
+            text = { Text("${rule.name} will no longer run. This does not delete its history.") },
             confirmButton = {
-                TextButton(onClick = { deleteDialogVisible = false }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = {
+                    scope.launch {
+                        dao.deleteRule(rule)
+                        rules = dao.allRules()
+                        ruleToDelete = null
+                    }
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { deleteDialogVisible = false }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { ruleToDelete = null }) { Text("Cancel") } },
         )
     }
 }
@@ -191,15 +246,15 @@ private fun RulesScreen(
     contentPadding: PaddingValues,
     automationEnabled: Boolean,
     onAutomationChanged: (Boolean) -> Unit,
+    rules: List<SmsRuleEntity>,
     onCreate: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    onEdit: (SmsRuleEntity) -> Unit,
+    onDelete: (SmsRuleEntity) -> Unit,
+    onRuleEnabledChange: (SmsRuleEntity, Boolean) -> Unit,
     receiveAllowed: Boolean,
     sendAllowed: Boolean,
     onOpenPermissions: () -> Unit,
 ) {
-    var otpRuleEnabled by remember { mutableStateOf(true) }
-    var creditRuleEnabled by remember { mutableStateOf(true) }
     Scaffold(
         topBar = { AppTopBar(title = "SMS Rules") },
         floatingActionButton = {
@@ -210,7 +265,7 @@ private fun RulesScreen(
             modifier = Modifier.fillMaxSize().padding(contentPadding).padding(padding)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Text("02 ACTIVE", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text("${rules.count { it.enabled }.toString().padStart(2, '0')} ACTIVE", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.onSurface)
             Text("ENABLED RELAY RULES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(16.dp))
             Text("Automatically relay an SMS only when its sender and message match a rule.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -224,9 +279,14 @@ private fun RulesScreen(
                 TextButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("+ ADD", style = MaterialTheme.typography.labelLarge) }
             }
             Spacer(Modifier.height(8.dp))
-            RuleCard("Bank OTP Forward", "+91 98765 43210", "OTP\\s*is\\s*(\\d{6})", "••••••7890", otpRuleEnabled, { otpRuleEnabled = it }, onEdit, onDelete)
-            Spacer(Modifier.height(12.dp))
-            RuleCard("Bank Credit Alert", "AD-HDFCBK", "credited.*INR...", "••••••4321", creditRuleEnabled, { creditRuleEnabled = it }, onEdit, onDelete)
+            if (rules.isEmpty()) {
+                Text("No rules yet. Add a rule to start relaying matching SMS messages.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                rules.forEach { rule ->
+                    RuleCard(rule, onRuleEnabledChange, onEdit, onDelete)
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
             Spacer(Modifier.height(96.dp))
         }
     }
@@ -275,34 +335,30 @@ private fun PermissionStatusCard(receiveAllowed: Boolean, sendAllowed: Boolean, 
 
 @Composable
 private fun RuleCard(
-    title: String,
-    sender: String,
-    pattern: String,
-    destination: String,
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    rule: SmsRuleEntity,
+    onEnabledChange: (SmsRuleEntity, Boolean) -> Unit,
+    onEdit: (SmsRuleEntity) -> Unit,
+    onDelete: (SmsRuleEntity) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(rule.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     }
-                    StatusPill(if (enabled) "Enabled" else "Disabled", if (enabled) Success else MaterialTheme.colorScheme.onSurfaceVariant)
+                    StatusPill(if (rule.enabled) "Enabled" else "Disabled", if (rule.enabled) Success else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Switch(checked = enabled, onCheckedChange = onEnabledChange)
-                IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Edit rule") }
-                IconButton(onClick = onDelete) { Icon(Icons.Filled.Delete, "Delete rule") }
+                Switch(checked = rule.enabled, onCheckedChange = { onEnabledChange(rule, it) })
+                IconButton(onClick = { onEdit(rule) }) { Icon(Icons.Filled.Edit, "Edit rule") }
+                IconButton(onClick = { onDelete(rule) }) { Icon(Icons.Filled.Delete, "Delete rule") }
             }
-            RuleValue("Incoming", sender, icon = Icons.Filled.Phone)
-            RuleValue("Pattern", pattern, mono = true, icon = Icons.Filled.FilterAlt)
-            RuleValue("Send to", destination, icon = Icons.Filled.Send)
+            RuleValue("Incoming", rule.senderFilter ?: "Any number", icon = Icons.Filled.Phone)
+            RuleValue("Pattern", rule.messageRegex, mono = true, icon = Icons.Filled.FilterAlt)
+            RuleValue("Send to", rule.destinationNumber, icon = Icons.Filled.Send)
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
             Text("[ SENT ]  TODAY, 8:42 PM", color = Success, style = MaterialTheme.typography.labelMedium)
-            IconButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Filled.MoreVert, "More options") }
+            IconButton(onClick = { onDelete(rule) }, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Filled.MoreVert, "More options") }
         }
     }
 }
@@ -319,25 +375,49 @@ private fun RuleValue(label: String, value: String, mono: Boolean = false, icon:
 }
 
 @Composable
-private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
-    var incomingNumber by remember { mutableStateOf("+91 98765 43210") }
-    var anyNumber by remember { mutableStateOf(false) }
-    var pattern by remember { mutableStateOf("OTP\\s*is\\s*(\\d{6})") }
-    var destination by remember { mutableStateOf("+91 91234 56789") }
-    var message by remember { mutableStateOf("OTP received: {{match_1}}") }
-    var enabled by remember { mutableStateOf(true) }
+private fun RuleEditorScreen(
+    rule: SmsRuleEntity?,
+    onBack: () -> Unit,
+    onSave: (RuleDraft) -> Unit,
+    onTest: (RuleDraft) -> Unit,
+) {
+    var name by remember(rule?.id) { mutableStateOf(rule?.name.orEmpty()) }
+    var incomingNumber by remember(rule?.id) { mutableStateOf(rule?.senderFilter.orEmpty()) }
+    var anyNumber by remember(rule?.id) { mutableStateOf(rule?.senderFilter == null) }
+    var pattern by remember(rule?.id) { mutableStateOf(rule?.messageRegex.orEmpty()) }
+    var destination by remember(rule?.id) { mutableStateOf(rule?.destinationNumber.orEmpty()) }
+    var message by remember(rule?.id) { mutableStateOf(rule?.outputTemplate.orEmpty()) }
+    var enabled by remember(rule?.id) { mutableStateOf(rule?.enabled ?: true) }
     var regexTested by remember { mutableStateOf(false) }
     val patternError = remember(pattern) { runCatching { Regex(pattern) }.exceptionOrNull()?.message }
     val sampleMatch = remember(pattern) { runCatching { Regex(pattern).find("OTP is 123456") }.getOrNull() }
     val broadRule = anyNumber && pattern.trim() == ".*"
 
-    Scaffold(topBar = { AppTopBar("Create SMS Rule", onBack) }) { padding ->
+    val draft = RuleDraft(
+        name = name,
+        senderFilter = if (anyNumber) null else incomingNumber,
+        messageRegex = pattern,
+        destinationNumber = destination,
+        outputTemplate = message,
+        enabled = enabled,
+    )
+    val canSave = patternError == null && name.isNotBlank() && pattern.isNotBlank() && (anyNumber || incomingNumber.isNotBlank()) && destination.isNotBlank() && message.isNotBlank()
+
+    Scaffold(topBar = { AppTopBar(if (rule == null) "Create SMS Rule" else "Edit SMS Rule", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Column(
                 modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 FlowStep("1", "Receive SMS from")
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Rule name") },
+                    supportingText = { Text("Use a short name to identify this relay rule.") },
+                    singleLine = true,
+                )
                 OutlinedTextField(
                     value = incomingNumber,
                     onValueChange = { incomingNumber = it },
@@ -391,8 +471,8 @@ private fun RuleEditorScreen(onBack: () -> Unit, onTest: () -> Unit) {
             Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TextButton(onClick = onBack, modifier = Modifier.weight(0.8f)) { Text("Cancel") }
-                    OutlinedButton(onClick = onTest, modifier = Modifier.weight(1f)) { Text("Test Rule") }
-                    Button(onClick = onBack, modifier = Modifier.weight(1f), enabled = patternError == null && (anyNumber || incomingNumber.isNotBlank()) && destination.isNotBlank() && message.isNotBlank()) { Text("Save Rule") }
+                    OutlinedButton(onClick = { onTest(draft) }, modifier = Modifier.weight(1f), enabled = patternError == null) { Text("Test Rule") }
+                    Button(onClick = { onSave(draft) }, modifier = Modifier.weight(1f), enabled = canSave) { Text("Save Rule") }
                 }
             }
         }
@@ -453,8 +533,9 @@ private fun WarningCard() {
 }
 
 @Composable
-private fun RuleTesterScreen(onBack: () -> Unit) {
-    var sender by remember { mutableStateOf("+91 98765 43210") }
+private fun RuleTesterScreen(draft: RuleDraft?, onBack: () -> Unit) {
+    val rule = draft ?: return
+    var sender by remember(rule.senderFilter) { mutableStateOf(rule.senderFilter.orEmpty()) }
     var body by remember { mutableStateOf("OTP is 123456") }
     var tested by remember { mutableStateOf(false) }
     Scaffold(topBar = { AppTopBar("Test Rule", onBack) }) { padding ->
@@ -467,14 +548,16 @@ private fun RuleTesterScreen(onBack: () -> Unit) {
             SectionTitle("Sample SMS")
             OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth(), minLines = 4, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
             Button(onClick = { tested = true }, modifier = Modifier.fillMaxWidth()) { Text("Run test") }
-            if (tested) TestResultCard(sender = sender, message = body)
+            if (tested) TestResultCard(rule = rule, sender = sender, message = body)
         }
     }
 }
 
 @Composable
-private fun TestResultCard(sender: String, message: String) {
-    val matched = sender.trim() == "+91 98765 43210" && Regex("OTP\\s*is\\s*(\\d{6})", RegexOption.IGNORE_CASE).containsMatchIn(message)
+private fun TestResultCard(rule: RuleDraft, sender: String, message: String) {
+    val senderMatched = rule.senderFilter.isNullOrBlank() || rule.senderFilter.trim().equals(sender.trim(), ignoreCase = true)
+    val regexMatch = runCatching { Regex(rule.messageRegex).find(message) }.getOrNull()
+    val matched = senderMatched && regexMatch != null
     Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (matched) "RULE MATCHED" else "RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = if (matched) Success else MaterialTheme.colorScheme.error)
@@ -482,18 +565,32 @@ private fun TestResultCard(sender: String, message: String) {
                 Text("Sender  ·  Matched")
                 Text("Regex  ·  Matched")
                 Text("Captured values", style = MaterialTheme.typography.labelLarge)
-                CodeText("match_0: OTP is 123456")
-                CodeText("match_1: 123456")
+                CodeText("match_0: ${regexMatch?.value.orEmpty()}")
+                regexMatch?.groups?.drop(1)?.forEachIndexed { index, group ->
+                    CodeText("match_${index + 1}: ${group?.value.orEmpty()}")
+                }
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
-                CodeText("OTP received: 123456")
+                CodeText(renderTestTemplate(rule.outputTemplate, sender, message, regexMatch))
             } else {
-                Text(if (sender == "+91 98765 43210") "Sender condition: Matched" else "Sender condition: Did not match")
-                Text(if (message.contains("OTP", true)) "Regex: Matched" else "Regex: Did not match")
+                Text(if (senderMatched) "Sender condition: Matched" else "Sender condition: Did not match")
+                Text(if (regexMatch != null) "Regex: Matched" else "Regex: Did not match")
             }
         }
     }
 }
+
+private fun renderTestTemplate(template: String, sender: String, message: String, match: MatchResult?): String =
+    Regex("\\{\\{([a-zA-Z0-9_]+)}}").replace(template) { token ->
+        when (val variable = token.groupValues[1]) {
+            "sender" -> sender
+            "message" -> message
+            "match_0" -> match?.value.orEmpty()
+            else -> variable.removePrefix("match_").toIntOrNull()
+                ?.let { index -> match?.groups?.getOrNull(index)?.value.orEmpty() }
+                ?: token.value
+        }
+    }
 
 private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
 
