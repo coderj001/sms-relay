@@ -94,6 +94,7 @@ private val Success = Color(0xFF4A9E5C)
 fun SmsRelayApp() {
     var screen by remember { mutableStateOf(AppScreen.RULES) }
     var automationEnabled by remember { mutableStateOf(true) }
+    var historyItems by remember { mutableStateOf(sampleHistoryItems()) }
     val context = LocalContext.current
     var receiveAllowed by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED)
@@ -123,7 +124,15 @@ fun SmsRelayApp() {
                 sendAllowed = sendAllowed,
                 onOpenPermissions = { screen = AppScreen.ONBOARDING },
             )
-            AppScreen.HISTORY -> HistoryScreen(innerPadding, automationEnabled, receiveAllowed && sendAllowed, onReviewPermissions = { screen = AppScreen.ONBOARDING }, onOpenDetails = { screen = AppScreen.DETAILS })
+            AppScreen.HISTORY -> HistoryScreen(
+                contentPadding = innerPadding,
+                automationEnabled = automationEnabled,
+                permissionsReady = receiveAllowed && sendAllowed,
+                items = historyItems,
+                onClearHistory = { historyItems = emptyList() },
+                onReviewPermissions = { screen = AppScreen.ONBOARDING },
+                onOpenDetails = { screen = AppScreen.DETAILS },
+            )
             AppScreen.SETTINGS -> SettingsScreen(
                 contentPadding = innerPadding,
                 automationEnabled = automationEnabled,
@@ -488,21 +497,28 @@ private fun TestResultCard(sender: String, message: String) {
 
 private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
 
+private fun sampleHistoryItems() = listOf(
+    HistoryItem("Bank OTP Forward", HistoryFilter.SENT, "+91 98765 43210", "••••••7890", "Today, 10:42 PM", "Today"),
+    HistoryItem("Bank Credit Alert", HistoryFilter.MATCHED, "AD-HDFCBK", "••••••3210", "Today, 8:42 PM", "Today"),
+    HistoryItem("Server Alert", HistoryFilter.FAILED, "Alert service", "••••••4567", "Today, 7:16 PM", "Today", "No mobile network"),
+    HistoryItem("Payment Forward", HistoryFilter.BLOCKED, "+91 90000 11111", "••••••2222", "Yesterday, 6:03 PM", "Yesterday", "Rate limit"),
+)
+
 @Composable
-private fun HistoryScreen(contentPadding: PaddingValues, automationEnabled: Boolean, permissionsReady: Boolean, onReviewPermissions: () -> Unit, onOpenDetails: () -> Unit) {
+private fun HistoryScreen(
+    contentPadding: PaddingValues,
+    automationEnabled: Boolean,
+    permissionsReady: Boolean,
+    items: List<HistoryItem>,
+    onClearHistory: () -> Unit,
+    onReviewPermissions: () -> Unit,
+    onOpenDetails: () -> Unit,
+) {
     var filter by remember { mutableStateOf(HistoryFilter.ALL) }
     var query by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var clearDialog by remember { mutableStateOf(false) }
-    var items by remember {
-        mutableStateOf(listOf(
-            HistoryItem("Bank OTP Forward", HistoryFilter.SENT, "+91 98765 43210", "••••••7890", "Today, 10:42 PM", "Today"),
-            HistoryItem("Bank Credit Alert", HistoryFilter.MATCHED, "AD-HDFCBK", "••••••3210", "Today, 8:42 PM", "Today"),
-            HistoryItem("Server Alert", HistoryFilter.FAILED, "Alert service", "••••••4567", "Today, 7:16 PM", "Today", "No mobile network"),
-            HistoryItem("Payment Forward", HistoryFilter.BLOCKED, "+91 90000 11111", "••••••2222", "Yesterday, 6:03 PM", "Yesterday", "Rate limit"),
-        ))
-    }
     val visible = items.filter { (filter == HistoryFilter.ALL || it.status == filter) && (query.isBlank() || it.rule.contains(query, true) || it.sender.contains(query, true) || it.destination.contains(query)) }
     Scaffold(topBar = {
         TopAppBar(
@@ -538,7 +554,7 @@ private fun HistoryScreen(contentPadding: PaddingValues, automationEnabled: Bool
             }
         }
     }
-    if (clearDialog) AlertDialog(onDismissRequest = { clearDialog = false }, title = { Text("Clear execution history?") }, text = { Text("This removes local history records. Your SMS rules will not be deleted.") }, confirmButton = { TextButton(onClick = { items = emptyList(); clearDialog = false }) { Text("Clear") } }, dismissButton = { TextButton(onClick = { clearDialog = false }) { Text("Cancel") } })
+    if (clearDialog) AlertDialog(onDismissRequest = { clearDialog = false }, title = { Text("Clear execution history?") }, text = { Text("This removes local history records. Your SMS rules will not be deleted.") }, confirmButton = { TextButton(onClick = { onClearHistory(); clearDialog = false }) { Text("Clear") } }, dismissButton = { TextButton(onClick = { clearDialog = false }) { Text("Cancel") } })
 }
 
 @Composable
