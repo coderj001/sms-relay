@@ -823,14 +823,14 @@ private fun DefaultSimDialog(current: Int, sims: List<SubscriptionInfo>, onSelec
         title = { Text("Default SIM") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                RadioSettingRow("Auto", "Reply on the SIM that received the SMS", current == AppSettings.AUTO_SIM) { onSelect(AppSettings.AUTO_SIM) }
+                RadioSettingRow("Auto", "Reply on the SIM that received the SMS", current == AppSettings.AUTO_SIM) { onSelect(AppSettings.AUTO_SIM); onDismiss() }
                 sims.forEach { info ->
-                    RadioSettingRow("SIM ${info.simSlotIndex + 1}", info.displayName?.toString().orEmpty(), current == info.subscriptionId) { onSelect(info.subscriptionId) }
+                    RadioSettingRow("SIM ${info.simSlotIndex + 1}", info.displayName?.toString().orEmpty(), current == info.subscriptionId) { onSelect(info.subscriptionId); onDismiss() }
                 }
                 if (sims.isEmpty()) Text("No active SIM detected.", style = MaterialTheme.typography.bodySmall)
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        confirmButton = { },
     )
 }
 
