@@ -42,6 +42,35 @@ class RuleMatcherTest {
         assertEquals(listOf("ab1234", "500.00"), evaluation.match.groups)
     }
 
+    @Test
+    fun `wildcard filter matches senders with varying prefix and suffix`() {
+        val r = rule(sender = "*-KOTAKB-*")
+        assertTrue(matcher.evaluate(r, sms(sender = "VM-KOTAKB-S")) is RuleEvaluation.Matched)
+        assertTrue(matcher.evaluate(r, sms(sender = "AX-KOTAKB-P")) is RuleEvaluation.Matched)
+    }
+
+    @Test
+    fun `wildcard filter rejects non-matching sender`() {
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "*-KOTAKB-*"), sms(sender = "VM-HDFCB-S")))
+    }
+
+    @Test
+    fun `question mark matches exactly one character`() {
+        assertTrue(matcher.evaluate(rule(sender = "BAN?"), sms(sender = "BANK")) is RuleEvaluation.Matched)
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "BAN?"), sms(sender = "BANKS")))
+    }
+
+    @Test
+    fun `filter without wildcards stays exact match`() {
+        assertTrue(matcher.evaluate(rule(sender = "*"), sms(sender = "ANYTHING")) is RuleEvaluation.Matched)
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "KOTAKB"), sms(sender = "VM-KOTAKB-S")))
+    }
+
+    @Test
+    fun `wildcard filter with blank sender does not match`() {
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "*-KOTAKB-*"), sms(sender = "")))
+    }
+
     private fun rule(sender: String? = null, regex: String = ".*") = SmsRule(
         id = 1,
         name = "Credit relay",

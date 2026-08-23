@@ -25,11 +25,25 @@ class RuleMatcher {
     }
 
     private fun senderMatches(filter: String?, sender: String?): Boolean {
-        val normalizedFilter = normalizeSender(filter)
-        return normalizedFilter == null || normalizedFilter == normalizeSender(sender)
+        val normalizedFilter = normalizeSender(filter) ?: return true
+        val normalizedSender = normalizeSender(sender) ?: return false
+        if (!normalizedFilter.contains('*') && !normalizedFilter.contains('?')) return normalizedFilter == normalizedSender
+        return globToRegex(normalizedFilter).matches(normalizedSender)
     }
 
     private fun normalizeSender(value: String?): String? =
         value?.trim()?.takeIf(String::isNotEmpty)?.uppercase()
+
+    private fun globToRegex(glob: String): Regex = Regex(
+        buildString {
+            glob.forEach { character ->
+                when (character) {
+                    '*' -> append(".*")
+                    '?' -> append(".")
+                    else -> append(Regex.escape(character.toString()))
+                }
+            }
+        },
+    )
 }
 
