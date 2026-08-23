@@ -4,6 +4,9 @@ package com.smsrelay.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.telephony.SubscriptionInfo
+import android.telephony.SubscriptionManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +58,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -85,10 +89,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.smsrelay.data.AppSettings
 import com.smsrelay.data.SmsRelayDatabaseProvider
 import com.smsrelay.data.ExecutionLogWithRule
 import com.smsrelay.data.SmsRuleEntity
+import com.smsrelay.data.settingsDataStore
 import androidx.compose.runtime.collectAsState
+import androidx.datastore.preferences.core.edit
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
@@ -124,6 +132,13 @@ fun SmsRelayApp() {
     LaunchedEffect(dao) { rules = dao.allRules() }
     val historyItems by remember(dao) { dao.allExecutionLogs() }.collectAsState(initial = emptyList())
     var selectedHistory by remember { mutableStateOf<HistoryItem?>(null) }
+    var phoneStateAllowed by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) }
+    val phoneStateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { phoneStateAllowed = it }
+    val defaultSimId by remember { context.settingsDataStore.data.map { it[AppSettings.DEFAULT_SIM_SUBSCRIPTION_ID] ?: AppSettings.AUTO_SIM } }.collectAsState(initial = AppSettings.AUTO_SIM)
+    val activeSims = remember(phoneStateAllowed) {
+        if (!phoneStateAllowed) emptyList()
+        else runCatching { SubscriptionManager.from(context).activeSubscriptionInfoList.orEmpty() }.getOrDefault(emptyList())
+    }
 
     fun saveRule(existing: SmsRuleEntity?, draft: RuleDraft) {
         scope.launch {
@@ -184,6 +199,11 @@ fun SmsRelayApp() {
                 automationEnabled = automationEnabled,
                 onAutomationChanged = { automationEnabled = it },
                 onOpenOnboarding = { screen = AppScreen.ONBOARDING },
+                defaultSimId = defaultSimId,
+                phoneStateAllowed = phoneStateAllowed,
+                activeSims = activeSims,
+                onRequestPhoneState = { phoneStateLauncher.launch(Manifest.permission.READ_PHONE_STATE) },
+                onDefaultSimChanged = { id -> scope.launch { context.settingsDataStore.edit { it[AppSettings.DEFAULT_SIM_SUBSCRIPTION_ID] = id } } },
             )
             AppScreen.EDITOR -> RuleEditorScreen(
                 rule = editingRule,
@@ -732,8 +752,19 @@ private fun PermissionCard(icon: ImageVector, title: String, description: String
 }
 
 @Composable
-private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boolean, onAutomationChanged: (Boolean) -> Unit, onOpenOnboarding: () -> Unit) {
+private fun SettingsScreen(
+    contentPadding: PaddingValues,
+    automationEnabled: Boolean,
+    onAutomationChanged: (Boolean) -> Unit,
+    onOpenOnboarding: () -> Unit,
+    defaultSimId: Int,
+    phoneStateAllowed: Boolean,
+    activeSims: List<SubscriptionInfo>,
+    onRequestPhoneState: () -> Unit,
+    onDefaultSimChanged: (Int) -> Unit,
+) {
     var storeFullContent by remember { mutableStateOf(false) }
+    var showSimDialog by remember { mutableStateOf(false) }
     Scaffold(
         modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
         topBar = { AppTopBar("Settings") },
@@ -741,7 +772,14 @@ private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boo
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             SettingGroup("Automation") {
                 SettingToggle("Master automation", "Stop all automatic sends immediately", automationEnabled, onAutomationChanged)
-                SettingRow("Default SIM", "SIM 1")
+                SettingRow(
+                    "Default SIM",
+                    when {
+                        !phoneStateAllowed -> "Permission required"
+                        else -> activeSims.firstOrNull { it.subscriptionId == defaultSimId }?.let { "SIM ${it.simSlotIndex + 1} · ${it.displayName}" } ?: "Auto · reply on receiving SIM"
+                    },
+                    onClick = { if (phoneStateAllowed) showSimDialog = true else onRequestPhoneState() },
+                )
             }
             SettingGroup("Safety") {
                 SettingRow("Automatic send limit", "5 per minute")
@@ -759,6 +797,7 @@ private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boo
             }
         }
     }
+    if (showSimDialog && phoneStateAllowed) DefaultSimDialog(defaultSimId, activeSims, { onDefaultSimChanged(it) }, { showSimDialog = false })
 }
 
 @Composable
@@ -774,6 +813,36 @@ private fun SettingToggle(title: String, summary: String, checked: Boolean, onCh
     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         Switch(checked, onCheckedChange)
+    }
+}
+
+@Composable
+private fun DefaultSimDialog(current: Int, sims: List<SubscriptionInfo>, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Default SIM") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                RadioSettingRow("Auto", "Reply on the SIM that received the SMS", current == AppSettings.AUTO_SIM) { onSelect(AppSettings.AUTO_SIM) }
+                sims.forEach { info ->
+                    RadioSettingRow("SIM ${info.simSlotIndex + 1}", info.displayName?.toString().orEmpty(), current == info.subscriptionId) { onSelect(info.subscriptionId) }
+                }
+                if (sims.isEmpty()) Text("No active SIM detected.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+@Composable
+private fun RadioSettingRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
