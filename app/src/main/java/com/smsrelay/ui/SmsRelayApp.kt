@@ -309,34 +309,24 @@ private fun RuleCard(
     Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(rule.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    }
-                    StatusPill(if (rule.enabled) "Enabled" else "Disabled", if (rule.enabled) Success else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text(rule.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 Switch(checked = rule.enabled, onCheckedChange = { onEnabledChange(rule, it) })
                 IconButton(onClick = { onEdit(rule) }) { Icon(Icons.Filled.Edit, "Edit rule") }
                 IconButton(onClick = { onDelete(rule) }) { Icon(Icons.Filled.Delete, "Delete rule") }
             }
-            RuleValue("Incoming", rule.senderFilter ?: "Any number", icon = Icons.Filled.Phone)
-            RuleValue("Pattern", rule.messageRegex, mono = true, icon = Icons.Filled.FilterAlt)
-            RuleValue("Send to", rule.destinationNumber, icon = Icons.Filled.Send)
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text("[ SENT ]  TODAY, 8:42 PM", color = Success, style = MaterialTheme.typography.labelMedium)
-            IconButton(onClick = { onDelete(rule) }, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Filled.MoreVert, "More options") }
+            RuleValue("Incoming", rule.senderFilter ?: "Any number")
+            RuleValue("Pattern", rule.messageRegex, mono = true)
+            RuleValue("Send to", rule.destinationNumber)
         }
     }
 }
 
 @Composable
-private fun RuleValue(label: String, value: String, mono: Boolean = false, icon: ImageVector? = null) {
+private fun RuleValue(label: String, value: String, mono: Boolean = false) {
     Spacer(Modifier.height(10.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column {
-            Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+    Column {
+        Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
