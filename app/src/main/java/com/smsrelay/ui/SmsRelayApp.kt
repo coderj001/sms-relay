@@ -158,8 +158,6 @@ fun SmsRelayApp() {
         when (screen) {
             AppScreen.RULES -> RulesScreen(
                 contentPadding = innerPadding,
-                automationEnabled = automationEnabled,
-                onAutomationChanged = { automationEnabled = it },
                 rules = rules,
                 onCreate = { editingRule = null; screen = AppScreen.EDITOR },
                 onEdit = { editingRule = it; screen = AppScreen.EDITOR },
@@ -247,8 +245,6 @@ private fun NavigationLabel(label: String, selected: Boolean) {
 @Composable
 private fun RulesScreen(
     contentPadding: PaddingValues,
-    automationEnabled: Boolean,
-    onAutomationChanged: (Boolean) -> Unit,
     rules: List<SmsRuleEntity>,
     onCreate: () -> Unit,
     onEdit: (SmsRuleEntity) -> Unit,
@@ -258,6 +254,7 @@ private fun RulesScreen(
     sendAllowed: Boolean,
     onOpenPermissions: () -> Unit,
 ) {
+    val permissionsReady = receiveAllowed && sendAllowed
     Scaffold(
         topBar = { AppTopBar(title = "SMS Rules") },
         floatingActionButton = {
@@ -268,20 +265,10 @@ private fun RulesScreen(
             modifier = Modifier.fillMaxSize().padding(contentPadding).padding(padding)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Text("${rules.count { it.enabled }.toString().padStart(2, '0')} ACTIVE", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text("ENABLED RELAY RULES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(16.dp))
-            Text("Automatically relay an SMS only when its sender and message match a rule.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(32.dp))
-            AutomationCard(automationEnabled, onAutomationChanged)
-            Spacer(Modifier.height(24.dp))
-            PermissionStatusCard(receiveAllowed, sendAllowed, onOpenPermissions)
-            Spacer(Modifier.height(32.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("YOUR RULES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                TextButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("+ ADD", style = MaterialTheme.typography.labelLarge) }
+            if (!permissionsReady) {
+                PermissionWarningCard(receiveAllowed, sendAllowed, onOpenPermissions)
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(8.dp))
             if (rules.isEmpty()) {
                 Text("No rules yet. Add a rule to start relaying matching SMS messages.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
@@ -296,42 +283,18 @@ private fun RulesScreen(
 }
 
 @Composable
-private fun AutomationCard(enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("MASTER AUTOMATION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                Text(if (enabled) "ARMED" else "PAUSED", style = MaterialTheme.typography.headlineSmall)
-                Text(if (enabled) "Matching messages can be relayed." else "No incoming message will be relayed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(if (enabled) "ON" else "OFF", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                Switch(checked = enabled, onCheckedChange = onCheckedChange)
-            }
-        }
-    }
-}
-
-@Composable
-private fun PermissionStatusCard(receiveAllowed: Boolean, sendAllowed: Boolean, onOpenPermissions: () -> Unit) {
-    val ready = receiveAllowed && sendAllowed
+private fun PermissionWarningCard(receiveAllowed: Boolean, sendAllowed: Boolean, onOpenPermissions: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        border = BorderStroke(1.dp, if (ready) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.tertiary),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ready) "[ SYSTEM READY ]" else "[ ACTION REQUIRED ]", style = MaterialTheme.typography.labelLarge, color = if (ready) Success else MaterialTheme.colorScheme.tertiary)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Permissions required", style = MaterialTheme.typography.titleSmall)
+                Text(listOfNotNull("Receive SMS".takeIf { !receiveAllowed }, "Send SMS".takeIf { !sendAllowed }).joinToString(", ") + " not granted", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (!ready) {
-                DetailRow("RECEIVE SMS", if (receiveAllowed) "GRANTED" else "NOT GRANTED")
-                DetailRow("SEND SMS", if (sendAllowed) "GRANTED" else "NOT GRANTED")
-                OutlinedButton(onClick = onOpenPermissions) { Text("CONFIGURE", style = MaterialTheme.typography.labelLarge) }
-            } else {
-                Text("Both permissions are granted. Rules can process incoming messages.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            TextButton(onClick = onOpenPermissions) { Text("Fix") }
         }
     }
 }
