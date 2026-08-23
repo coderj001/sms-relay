@@ -24,14 +24,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Search
@@ -256,13 +254,14 @@ private fun RulesScreen(
 ) {
     val permissionsReady = receiveAllowed && sendAllowed
     Scaffold(
+        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
         topBar = { AppTopBar(title = "SMS Rules") },
         floatingActionButton = {
             ExtendedFloatingActionButton(onClick = onCreate, icon = { Icon(Icons.Filled.Add, null) }, text = { Text("Add Rule") })
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(contentPadding).padding(padding)
+            modifier = Modifier.fillMaxSize().padding(padding)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (!permissionsReady) {
@@ -733,8 +732,11 @@ private fun PermissionCard(icon: ImageVector, title: String, description: String
 @Composable
 private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boolean, onAutomationChanged: (Boolean) -> Unit, onOpenOnboarding: () -> Unit) {
     var storeFullContent by remember { mutableStateOf(false) }
-    Scaffold(topBar = { AppTopBar("Settings") }) { padding ->
-        Column(Modifier.fillMaxSize().padding(contentPadding).padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Scaffold(
+        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
+        topBar = { AppTopBar("Settings") },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             SettingGroup("Automation") {
                 SettingToggle("Master automation", "Stop all automatic sends immediately", automationEnabled, onAutomationChanged)
                 SettingRow("Default SIM", "SIM 1")
