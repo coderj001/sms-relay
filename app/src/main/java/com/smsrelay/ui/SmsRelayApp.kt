@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,8 +24,10 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
@@ -677,16 +680,21 @@ private fun HistoryScreen(
     Scaffold(
         modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
         topBar = {
-            TopAppBar(
-                title = { if (searching) OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") }) else Column { Text("History", fontWeight = FontWeight.SemiBold); Text("View matched rules, sent messages, failures, and blocked actions.", style = MaterialTheme.typography.labelSmall) } },
-            actions = {
-                IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(Icons.Filled.Search, "Search history") }
-                Box {
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "History options") }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) { DropdownMenuItem(text = { Text("Clear History") }, onClick = { menuOpen = false; clearDialog = true }) }
-                }
-            },
-        )
+            AppTopBar(
+                title = "History",
+                titleContent = if (searching) {
+                    {
+                        OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") })
+                    }
+                } else null,
+                actions = {
+                    IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, "Search history") }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "History options") }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) { DropdownMenuItem(text = { Text("Clear History") }, onClick = { menuOpen = false; clearDialog = true }) }
+                    }
+                },
+            )
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (!permissionsReady) CompactBanner("SMS permissions are incomplete", "Review Permissions", MaterialTheme.colorScheme.tertiary, onReviewPermissions)
@@ -916,10 +924,20 @@ private fun SettingRow(title: String, value: String, onClick: (() -> Unit)? = nu
 }
 
 @Composable
-private fun AppTopBar(title: String, onBack: (() -> Unit)? = null) {
+private fun AppTopBar(
+    title: String,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+    titleContent: (@Composable () -> Unit)? = null,
+) {
     TopAppBar(
-        title = { Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        navigationIcon = { if (onBack != null) TextButton(onClick = onBack) { Text("< BACK", style = MaterialTheme.typography.labelMedium) } },
+        title = { titleContent?.invoke() ?: Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        navigationIcon = {
+            if (onBack != null) IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            }
+        },
+        actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }
