@@ -26,12 +26,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Message
@@ -65,12 +63,14 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -147,6 +147,15 @@ fun SmsRelayApp() {
     val activeSims = remember(phoneStateAllowed) {
         if (!phoneStateAllowed) emptyList()
         else runCatching { SubscriptionManager.from(context).activeSubscriptionInfoList.orEmpty() }.getOrDefault(emptyList())
+    }
+
+    BackHandler(enabled = screen != AppScreen.RULES) {
+        when (screen) {
+            AppScreen.TESTER -> screen = AppScreen.EDITOR
+            AppScreen.DETAILS -> screen = AppScreen.HISTORY
+            AppScreen.ONBOARDING -> screen = AppScreen.SETTINGS
+            else -> screen = AppScreen.RULES
+        }
     }
 
     fun saveRule(existing: SmsRuleEntity?, draft: RuleDraft) {
@@ -338,7 +347,7 @@ private fun RuleCard(
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(rule.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Switch(checked = rule.enabled, onCheckedChange = { onEnabledChange(rule, it) })
+                AppSwitch(checked = rule.enabled, onCheckedChange = { onEnabledChange(rule, it) })
                 IconButton(onClick = { onEdit(rule) }) { Icon(Icons.Filled.Edit, "Edit rule") }
                 IconButton(onClick = { onDelete(rule) }) { Icon(Icons.Filled.Delete, "Delete rule") }
             }
@@ -460,7 +469,7 @@ private fun RuleEditorScreen(
                         Text("Enable Rule", style = MaterialTheme.typography.titleMedium)
                         Text("Enabled rules can automatically send SMS messages.", style = MaterialTheme.typography.bodySmall)
                     }
-                    Switch(enabled, { enabled = it })
+                    AppSwitch(enabled, { enabled = it })
                 }
                 if (broadRule) WarningCard()
                 Spacer(Modifier.height(12.dp))
@@ -723,13 +732,7 @@ private fun HistoryScreen(
 
 @Composable
 private fun HistoryEntry(item: HistoryItem, onClick: () -> Unit) {
-    val (_, color, label) = when (item.status) {
-        HistoryFilter.SENT -> Triple(Icons.Filled.CheckCircle, Success, "SMS sent successfully")
-        HistoryFilter.FAILED -> Triple(Icons.Filled.Error, MaterialTheme.colorScheme.error, "Failed to send")
-        HistoryFilter.BLOCKED -> Triple(Icons.Filled.Warning, MaterialTheme.colorScheme.tertiary, "Blocked")
-        HistoryFilter.MATCHED -> Triple(Icons.Filled.Rule, MaterialTheme.colorScheme.secondary, "Rule matched")
-        HistoryFilter.ALL -> Triple(Icons.Filled.History, MaterialTheme.colorScheme.onSurfaceVariant, "Activity")
-    }
+    val (color, label) = statusMeta(item.status)
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -750,17 +753,29 @@ private fun CompactBanner(message: String, action: String?, color: Color, onActi
 @Composable
 private fun ExecutionDetailsScreen(item: HistoryItem?, onBack: () -> Unit) {
     if (item == null) { onBack(); return }
+    val (color, label) = statusMeta(item.status)
     Scaffold(topBar = { AppTopBar("Execution Details", onBack) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            DetailSection("Rule") { Text(item.rule, style = MaterialTheme.typography.titleMedium) }
-            DetailSection("Execution") {
-                DetailRow("From", item.sender)
-                DetailRow("To", item.destination)
-                DetailRow("Time", item.time)
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, color), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("[ ${label.uppercase()} ]", color = color, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.weight(1f))
+                    Text(item.time.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
+                    Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (item.detail.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(item.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
-            DetailSection("Result") {
-                DetailRow("Status", item.status.name)
-                if (item.detail.isNotBlank()) CodeText(item.detail) else StatusPill("Completed", Success)
+            DetailSection("Message") {
+                DetailRow("From", item.sender)
+            }
+            DetailSection("Delivery") {
+                DetailRow("To", item.destination)
+                DetailRow("Status", label)
             }
         }
     }
@@ -878,8 +893,31 @@ private fun SettingGroup(title: String, content: @Composable () -> Unit) {
 private fun SettingToggle(title: String, summary: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Switch(checked, onCheckedChange)
+        AppSwitch(checked, onCheckedChange)
     }
+}
+
+@Composable
+private fun AppSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, enabled: Boolean = true) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+            checkedTrackColor = MaterialTheme.colorScheme.primary,
+            checkedBorderColor = MaterialTheme.colorScheme.primary,
+            uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+            uncheckedTrackColor = MaterialTheme.colorScheme.surface,
+            uncheckedBorderColor = MaterialTheme.colorScheme.outline,
+            disabledCheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+            disabledCheckedBorderColor = Color.Transparent,
+            disabledUncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledUncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledUncheckedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        ),
+    )
 }
 
 @Composable
@@ -944,6 +982,15 @@ private fun AppTopBar(
 
 @Composable
 private fun SectionTitle(value: String) = Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+@Composable
+private fun statusMeta(status: HistoryFilter): Pair<Color, String> = when (status) {
+    HistoryFilter.SENT -> Success to "SMS sent successfully"
+    HistoryFilter.FAILED -> MaterialTheme.colorScheme.error to "Failed to send"
+    HistoryFilter.BLOCKED -> MaterialTheme.colorScheme.tertiary to "Blocked"
+    HistoryFilter.MATCHED -> MaterialTheme.colorScheme.secondary to "Rule matched"
+    HistoryFilter.ALL -> MaterialTheme.colorScheme.onSurfaceVariant to "Activity"
+}
 
 @Composable
 private fun StatusPill(value: String, color: Color) {
