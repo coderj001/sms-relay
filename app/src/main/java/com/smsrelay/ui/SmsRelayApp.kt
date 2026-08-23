@@ -516,8 +516,11 @@ private fun ChipRow(variables: List<String>, onInsert: (String) -> Unit) {
 
 @Composable
 private fun VariablePicker(pattern: String, onInsert: (String) -> Unit) {
-    val groupCount = remember(pattern) { runCatching { "\\((?!\\?)".toRegex().findAll(pattern).count() }.getOrDefault(0) }
     val namedGroups = remember(pattern) { "\\(\\?<([a-zA-Z][a-zA-Z0-9_]*)>".toRegex().findAll(pattern).map { it.groupValues[1] }.distinct().toList() }
+    val groupCount = remember(pattern) {
+        val positional = runCatching { "\\((?!\\?)".toRegex().findAll(pattern).count() }.getOrDefault(0)
+        positional + namedGroups.size
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Message data", style = MaterialTheme.typography.labelLarge)
         Text("{{sender}} who sent it · {{message}} the original SMS · {{timestamp}} arrival time", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
