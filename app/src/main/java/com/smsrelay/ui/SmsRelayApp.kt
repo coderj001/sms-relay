@@ -592,49 +592,45 @@ private fun RuleTesterScreen(draft: RuleDraft?, onBack: () -> Unit) {
 
 @Composable
 private fun TestResultCard(rule: RuleDraft, sender: String, message: String) {
-    val senderMatched = rule.senderFilter.isNullOrBlank() || rule.senderFilter.trim().equals(sender.trim(), ignoreCase = true)
-    val regexMatch = runCatching { Regex(rule.messageRegex).find(message) }.getOrNull()
-    val matched = senderMatched && regexMatch != null
+    val sample = remember(sender, message) { IncomingSms(sender.trim().takeIf(String::isNotEmpty), message, System.currentTimeMillis(), null) }
+    val draftRule = SmsRule(0, "test", true, rule.senderFilter?.trim()?.takeIf(String::isNotEmpty), rule.messageRegex, "", rule.outputTemplate, 0L, 0L)
+    val evaluation = remember(rule.senderFilter, rule.messageRegex, rule.outputTemplate, sender, message) { RuleMatcher().evaluate(draftRule, sample) }
     Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (matched) "RULE MATCHED" else "RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = if (matched) Success else MaterialTheme.colorScheme.error)
-            if (matched) {
-                Text("Sender  ·  Matched")
-                Text("Regex  ·  Matched")
-                Text("Captured values", style = MaterialTheme.typography.labelLarge)
-                CodeText("match_0: ${regexMatch?.value.orEmpty()}")
-                regexMatch?.groups?.drop(1)?.forEachIndexed { index, group ->
-                    CodeText("match_${index + 1}: ${group?.value.orEmpty()}")
+            when (evaluation) {
+                is RuleEvaluation.Matched -> {
+                    Text("RULE MATCHED", style = MaterialTheme.typography.headlineSmall, color = Success)
+                    Text("Sender  ·  Matched")
+                    Text("Regex  ·  Matched")
+                    Text("Captured values", style = MaterialTheme.typography.labelLarge)
+                    CodeText("match_0: ${evaluation.match.value}")
+                    evaluation.match.groups.forEachIndexed { index, group -> CodeText("match_${index + 1}: ${group.orEmpty()}") }
+                    evaluation.match.namedGroups.forEach { (name, value) -> CodeText("$name: ${value.orEmpty()}") }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
+                    when (val rendered = TemplateRenderer().render(rule.outputTemplate, sample, evaluation.match)) {
+                        is TemplateResult.Success -> CodeText(rendered.value)
+                        is TemplateResult.UnknownVariable -> CodeText("Unknown variable {{${rendered.variable}}}")
+                    }
                 }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
-                CodeText(renderTestTemplate(rule.outputTemplate, sender, message, regexMatch))
-            } else {
-                Text(if (senderMatched) "Sender condition: Matched" else "Sender condition: Did not match")
-                Text(if (regexMatch != null) "Regex: Matched" else "Regex: Did not match")
+                RuleEvaluation.SenderMismatch -> {
+                    Text("RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                    Text("Sender condition: Did not match")
+                    Text("Regex: Not evaluated")
+                }
+                RuleEvaluation.MessageMismatch -> {
+                    Text("RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                    Text("Sender condition: Matched")
+                    Text("Regex: Did not match")
+                }
+                is RuleEvaluation.InvalidPattern -> {
+                    Text("RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                    Text("Invalid pattern: ${evaluation.message}")
+                }
             }
         }
     }
 }
-
-private fun renderTestTemplate(template: String, sender: String, message: String, match: MatchResult?): String =
-    Regex("\\{\\{([a-zA-Z0-9_]+)}}").replace(template) { token ->
-        when (val variable = token.groupValues[1]) {
-            "sender" -> sender
-            "message" -> message
-            "match_0" -> match?.value.orEmpty()
-            else -> variable.removePrefix("match_").toIntOrNull()
-                ?.let { index ->
-                    val groups = match?.groups
-                    if (groups != null && index >= 0 && index < groups.size) {
-                        groups[index]?.value.orEmpty()
-                    } else {
-                        ""
-                    }
-                }
-                ?: token.value
-        }
-    }
 
 private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
 
