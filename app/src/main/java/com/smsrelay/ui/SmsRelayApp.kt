@@ -587,7 +587,14 @@ private fun renderTestTemplate(template: String, sender: String, message: String
             "message" -> message
             "match_0" -> match?.value.orEmpty()
             else -> variable.removePrefix("match_").toIntOrNull()
-                ?.let { index -> match?.groups?.getOrNull(index)?.value.orEmpty() }
+                ?.let { index ->
+                    val groups = match?.groups
+                    if (groups != null && index >= 0 && index < groups.size) {
+                        groups[index]?.value.orEmpty()
+                    } else {
+                        ""
+                    }
+                }
                 ?: token.value
         }
     }
