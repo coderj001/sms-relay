@@ -596,9 +596,11 @@ private fun HistoryScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var clearDialog by remember { mutableStateOf(false) }
     val visible = items.filter { (filter == HistoryFilter.ALL || it.status == filter) && (query.isBlank() || it.rule.contains(query, true) || it.sender.contains(query, true) || it.destination.contains(query)) }
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { if (searching) OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") }) else Column { Text("History", fontWeight = FontWeight.SemiBold); Text("View matched rules, sent messages, failures, and blocked actions.", style = MaterialTheme.typography.labelSmall) } },
+    Scaffold(
+        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
+        topBar = {
+            TopAppBar(
+                title = { if (searching) OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") }) else Column { Text("History", fontWeight = FontWeight.SemiBold); Text("View matched rules, sent messages, failures, and blocked actions.", style = MaterialTheme.typography.labelSmall) } },
             actions = {
                 IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(Icons.Filled.Search, "Search history") }
                 Box {
@@ -608,7 +610,7 @@ private fun HistoryScreen(
             },
         )
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(contentPadding).padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
             if (!permissionsReady) CompactBanner("SMS permissions are incomplete", "Review Permissions", MaterialTheme.colorScheme.tertiary, onReviewPermissions)
             if (!automationEnabled) CompactBanner("Automation is currently off", null, MaterialTheme.colorScheme.onSurfaceVariant, {})
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
