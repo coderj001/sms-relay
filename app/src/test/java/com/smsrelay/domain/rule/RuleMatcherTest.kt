@@ -71,6 +71,24 @@ class RuleMatcherTest {
         assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "*-KOTAKB-*"), sms(sender = "")))
     }
 
+    @Test
+    fun `populates named groups on match`() {
+        val evaluation = matcher.evaluate(rule(regex = "(?<price>INR\\s*\\d+) total"), sms().copy(body = "INR 500 total"))
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(mapOf<String, String?>("price" to "INR 500"), evaluation.match.namedGroups)
+    }
+
+    @Test
+    fun `unmatched optional named group maps to null`() {
+        val evaluation = matcher.evaluate(rule(regex = "(?<code>[A-Z]{4})?(?:x)?INR"), sms().copy(body = "INR"))
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(mapOf<String, String?>("code" to null), evaluation.match.namedGroups)
+    }
+
     private fun rule(sender: String? = null, regex: String = ".*") = SmsRule(
         id = 1,
         name = "Credit relay",

@@ -16,10 +16,15 @@ class RuleMatcher {
         }
         val result = regex.find(sms.body) ?: return RuleEvaluation.MessageMismatch
 
+        val namedGroups = GROUP_NAME.findAll(rule.messageRegex)
+            .map { it.groupValues[1] }
+            .associateWith { name -> (result.groups as? MatchNamedGroupCollection)?.get(name)?.value }
+
         return RuleEvaluation.Matched(
             RuleMatch(
                 value = result.value,
                 groups = result.groups.drop(1).map { it?.value },
+                namedGroups = namedGroups,
             ),
         )
     }
@@ -45,5 +50,9 @@ class RuleMatcher {
             }
         },
     )
+
+    private companion object {
+        val GROUP_NAME = Regex("\\(\\?<([a-zA-Z][a-zA-Z0-9_]*)>")
+    }
 }
 

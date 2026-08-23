@@ -5,26 +5,27 @@ import com.smsrelay.domain.model.RuleMatch
 
 class TemplateRenderer {
     fun render(template: String, sms: IncomingSms, match: RuleMatch): TemplateResult {
-        val values = mapOf(
-            "message" to sms.body,
-            "sender" to sms.sender.orEmpty(),
-            "match_0" to match.value,
-            "match_1" to match.groups.getOrNull(0).orEmpty(),
-            "match_2" to match.groups.getOrNull(1).orEmpty(),
-            "timestamp" to sms.receivedAt.toString(),
-        )
+        val values = buildMap {
+            put("message", sms.body)
+            put("sender", sms.sender.orEmpty())
+            put("timestamp", sms.receivedAt.toString())
+            put("match_0", match.value)
+            match.groups.forEachIndexed { index, group -> put("match_" + (index + 1), group.orEmpty()) }
+            match.namedGroups.forEach { (name, value) -> put(name, value.orEmpty()) }
+        }
         val unknown = VARIABLE.findAll(template)
             .map { it.groupValues[1] }
-            .firstOrNull { it !in values }
+            .firstOrNull { it !in values && !MATCH_INDEX.matches(it) }
             ?: return TemplateResult.Success(
-                VARIABLE.replace(template) { values.getValue(it.groupValues[1]) },
+                VARIABLE.replace(template) { values[it.groupValues[1]] ?: "" },
             )
 
         return TemplateResult.UnknownVariable(unknown)
     }
 
     private companion object {
-        val VARIABLE = Regex("\\{\\{([a-zA-Z0-9_]+)}}")
+        val VARIABLE = Regex("\\{\\{([a-zA-Z0-9_]+)\\}\\}")
+        val MATCH_INDEX = Regex("^match_[0-9]+$")
     }
 }
 
