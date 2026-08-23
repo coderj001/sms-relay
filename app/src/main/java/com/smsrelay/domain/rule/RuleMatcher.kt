@@ -18,7 +18,7 @@ class RuleMatcher {
 
         val namedGroups = GROUP_NAME.findAll(rule.messageRegex)
             .map { it.groupValues[1] }
-            .associateWith { name -> (result.groups as? MatchNamedGroupCollection)?.get(name)?.value }
+            .associateWith { name -> runCatching { (result.groups as? MatchNamedGroupCollection)?.get(name)?.value }.getOrNull() }
 
         return RuleEvaluation.Matched(
             RuleMatch(

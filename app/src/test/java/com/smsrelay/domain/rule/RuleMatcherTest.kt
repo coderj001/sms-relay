@@ -89,6 +89,22 @@ class RuleMatcherTest {
         assertEquals(mapOf<String, String?>("code" to null), evaluation.match.namedGroups)
     }
 
+    @Test
+    fun `pseudo named group declaration does not crash evaluation`() {
+        val evaluation = matcher.evaluate(rule(regex = "[(?<code>].*"), sms())
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+    }
+
+    @Test
+    fun `escaped pseudo declaration maps to null`() {
+        val evaluation = matcher.evaluate(rule(regex = "\\(\\?<code>x*(?<real>A)"), sms().copy(body = "(?<code>xA"))
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(mapOf<String, String?>("real" to "A"), evaluation.match.namedGroups)
+    }
+
     private fun rule(sender: String? = null, regex: String = ".*") = SmsRule(
         id = 1,
         name = "Credit relay",
