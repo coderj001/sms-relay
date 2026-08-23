@@ -88,7 +88,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.smsrelay.data.SmsRelayDatabaseProvider
+import com.smsrelay.data.ExecutionLogWithRule
 import com.smsrelay.data.SmsRuleEntity
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.launch
 
 private enum class AppScreen { RULES, HISTORY, SETTINGS, EDITOR, TESTER, DETAILS, ONBOARDING }
@@ -107,7 +109,6 @@ private data class RuleDraft(
 fun SmsRelayApp() {
     var screen by remember { mutableStateOf(AppScreen.RULES) }
     var automationEnabled by remember { mutableStateOf(true) }
-    var historyItems by remember { mutableStateOf(sampleHistoryItems()) }
     val context = LocalContext.current
     val dao = remember(context) { SmsRelayDatabaseProvider.get(context).dao() }
     val scope = rememberCoroutineScope()
@@ -123,6 +124,8 @@ fun SmsRelayApp() {
     var ruleToDelete by remember { mutableStateOf<SmsRuleEntity?>(null) }
 
     LaunchedEffect(dao) { rules = dao.allRules() }
+    val historyItems by remember(dao) { dao.allExecutionLogs() }.collectAsState(initial = emptyList())
+    var selectedHistory by remember { mutableStateOf<HistoryItem?>(null) }
 
     fun saveRule(existing: SmsRuleEntity?, draft: RuleDraft) {
         scope.launch {
@@ -175,10 +178,10 @@ fun SmsRelayApp() {
                 contentPadding = innerPadding,
                 automationEnabled = automationEnabled,
                 permissionsReady = receiveAllowed && sendAllowed,
-                items = historyItems,
-                onClearHistory = { historyItems = emptyList() },
+                items = historyItems.map { it.toHistoryItem() },
+                onClearHistory = { scope.launch { dao.clearExecutionLogs() } },
                 onReviewPermissions = { screen = AppScreen.ONBOARDING },
-                onOpenDetails = { screen = AppScreen.DETAILS },
+                onOpenDetails = { selectedHistory = it; screen = AppScreen.DETAILS },
             )
             AppScreen.SETTINGS -> SettingsScreen(
                 contentPadding = innerPadding,
@@ -193,7 +196,7 @@ fun SmsRelayApp() {
                 onTest = { testerDraft = it; screen = AppScreen.TESTER },
             )
             AppScreen.TESTER -> RuleTesterScreen(draft = testerDraft, onBack = { screen = AppScreen.EDITOR })
-            AppScreen.DETAILS -> ExecutionDetailsScreen(onBack = { screen = AppScreen.HISTORY })
+            AppScreen.DETAILS -> ExecutionDetailsScreen(item = selectedHistory, onBack = { screen = AppScreen.HISTORY })
             AppScreen.ONBOARDING -> PermissionOnboardingScreen(
                 receiveAllowed = receiveAllowed,
                 sendAllowed = sendAllowed,
@@ -601,12 +604,29 @@ private fun renderTestTemplate(template: String, sender: String, message: String
 
 private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
 
-private fun sampleHistoryItems() = listOf(
-    HistoryItem("Bank OTP Forward", HistoryFilter.SENT, "+91 98765 43210", "••••••7890", "Today, 10:42 PM", "Today"),
-    HistoryItem("Bank Credit Alert", HistoryFilter.MATCHED, "AD-HDFCBK", "••••••3210", "Today, 8:42 PM", "Today"),
-    HistoryItem("Server Alert", HistoryFilter.FAILED, "Alert service", "••••••4567", "Today, 7:16 PM", "Today", "No mobile network"),
-    HistoryItem("Payment Forward", HistoryFilter.BLOCKED, "+91 90000 11111", "••••••2222", "Yesterday, 6:03 PM", "Yesterday", "Rate limit"),
-)
+private fun ExecutionLogWithRule.toHistoryItem(): HistoryItem {
+    val created = java.time.Instant.ofEpochMilli(log.createdAt).atZone(java.time.ZoneId.systemDefault())
+    val today = java.time.LocalDate.now()
+    val group = when (created.toLocalDate()) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> created.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy"))
+    }
+    return HistoryItem(
+        rule = ruleName ?: "Unknown rule",
+        status = when (log.status) {
+            "SENT" -> HistoryFilter.SENT
+            "FAILED" -> HistoryFilter.FAILED
+            "RATE_LIMITED", "PERMISSION_MISSING" -> HistoryFilter.BLOCKED
+            else -> HistoryFilter.MATCHED
+        },
+        sender = log.senderPreview ?: "Unknown",
+        destination = log.destinationMasked ?: "—",
+        time = "$group, ${created.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))}",
+        group = group,
+        detail = log.detail.orEmpty(),
+    )
+}
 
 @Composable
 private fun HistoryScreen(
@@ -616,7 +636,7 @@ private fun HistoryScreen(
     items: List<HistoryItem>,
     onClearHistory: () -> Unit,
     onReviewPermissions: () -> Unit,
-    onOpenDetails: () -> Unit,
+    onOpenDetails: (HistoryItem) -> Unit,
 ) {
     var filter by remember { mutableStateOf(HistoryFilter.ALL) }
     var query by remember { mutableStateOf("") }
@@ -652,7 +672,7 @@ private fun HistoryScreen(
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     visible.groupBy { it.group }.forEach { (group, records) ->
                         Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
-                        records.forEach { HistoryEntry(it, onOpenDetails) }
+                        records.forEach { HistoryEntry(it, { onOpenDetails(it) }) }
                     }
                 }
             }
@@ -688,20 +708,19 @@ private fun CompactBanner(message: String, action: String?, color: Color, onActi
 }
 
 @Composable
-private fun ExecutionDetailsScreen(onBack: () -> Unit) {
+private fun ExecutionDetailsScreen(item: HistoryItem?, onBack: () -> Unit) {
+    if (item == null) { onBack(); return }
     Scaffold(topBar = { AppTopBar("Execution Details", onBack) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            DetailSection("Rule") { Text("Bank Credit Alert", style = MaterialTheme.typography.titleMedium) }
-            DetailSection("Incoming message") {
-                DetailRow("Sender", "AD-HDFCBK")
-                DetailRow("Received", "16 Aug 2026, 8:42 PM")
-                CodeText("Your account has been credited INR •••••")
+            DetailSection("Rule") { Text(item.rule, style = MaterialTheme.typography.titleMedium) }
+            DetailSection("Execution") {
+                DetailRow("From", item.sender)
+                DetailRow("To", item.destination)
+                DetailRow("Time", item.time)
             }
-            DetailSection("Match") { DetailRow("Sender condition", "Matched"); DetailRow("Regex", "Matched") }
-            DetailSection("Outgoing") {
-                DetailRow("Destination", "••••••3210")
-                CodeText("Payment received: ₹5,000")
-                StatusPill("Sent successfully", MaterialTheme.colorScheme.primary)
+            DetailSection("Result") {
+                DetailRow("Status", item.status.name)
+                if (item.detail.isNotBlank()) CodeText(item.detail) else StatusPill("Completed", Success)
             }
         }
     }

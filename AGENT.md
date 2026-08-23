@@ -4,6 +4,8 @@
 
 Build an Android application that receives new SMS messages, evaluates user-defined sender and regex rules, and sends an SMS to a configured destination when an enabled rule matches.
 
+> Use android skills exists in the repo for operations
+
 Core flow:
 
 ```text
