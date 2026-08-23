@@ -94,6 +94,12 @@ import com.smsrelay.data.SmsRelayDatabaseProvider
 import com.smsrelay.data.ExecutionLogWithRule
 import com.smsrelay.data.SmsRuleEntity
 import com.smsrelay.data.settingsDataStore
+import com.smsrelay.domain.model.IncomingSms
+import com.smsrelay.domain.model.RuleEvaluation
+import com.smsrelay.domain.model.SmsRule
+import com.smsrelay.domain.rule.RuleMatcher
+import com.smsrelay.domain.template.TemplateRenderer
+import com.smsrelay.domain.template.TemplateResult
 import androidx.compose.runtime.collectAsState
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.map
@@ -367,6 +373,19 @@ private fun RuleEditorScreen(
     val patternError = remember(pattern) { runCatching { Regex(pattern) }.exceptionOrNull()?.message }
     val sampleMatch = remember(pattern) { runCatching { Regex(pattern).find("OTP is 123456") }.getOrNull() }
     val broadRule = anyNumber && pattern.trim() == ".*"
+    val preview = remember(pattern, message, anyNumber, incomingNumber) {
+        val sample = IncomingSms("VM-KOTAKB-S", "OTP is 123456", System.currentTimeMillis(), null)
+        val draftRule = SmsRule(0, "preview", true, if (anyNumber) null else incomingNumber.trim().takeIf(String::isNotEmpty), pattern, "", message, 0L, 0L)
+        when (val evaluation = RuleMatcher().evaluate(draftRule, sample)) {
+            is RuleEvaluation.Matched -> when (val rendered = TemplateRenderer().render(message, sample, evaluation.match)) {
+                is TemplateResult.Success -> MessagePreview.Rendered(rendered.value)
+                is TemplateResult.UnknownVariable -> MessagePreview.Invalid("Unknown variable {{${rendered.variable}}}")
+            }
+            RuleEvaluation.SenderMismatch -> MessagePreview.SenderMismatch
+            RuleEvaluation.MessageMismatch -> MessagePreview.NoMatch
+            is RuleEvaluation.InvalidPattern -> MessagePreview.Invalid(evaluation.message)
+        }
+    }
 
     val draft = RuleDraft(
         name = name,
@@ -400,7 +419,7 @@ private fun RuleEditorScreen(
                     label = { Text("Incoming phone number") },
                     placeholder = { Text("Any number") },
                     enabled = !anyNumber,
-                    supportingText = { Text("Only SMS messages received from this number will be checked.") },
+                    supportingText = { Text("Exact sender or wildcard: * = any characters, ? = one. Example: *-KOTAKB-*. Empty = any sender.") },
                     singleLine = true,
                 )
                 FilterChip(selected = anyNumber, onClick = { anyNumber = !anyNumber }, label = { Text("Any number") })
@@ -430,8 +449,8 @@ private fun RuleEditorScreen(
                 FlowArrow()
                 FlowStep("4", "Outgoing message")
                 OutlinedTextField(message, { message = it }, Modifier.fillMaxWidth(), label = { Text("Message to send") }, minLines = 4, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
-                Text("Available variables", style = MaterialTheme.typography.labelLarge)
-                VariableChips(onInsert = { message += it })
+                VariablePicker(pattern = pattern, onInsert = { message += it })
+                MessagePreviewCard(preview = preview)
                 HorizontalDivider(Modifier.padding(top = 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -489,10 +508,50 @@ private fun RegexResultCard(match: MatchResult?) {
 }
 
 @Composable
-private fun VariableChips(onInsert: (String) -> Unit) {
+private fun ChipRow(variables: List<String>, onInsert: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("{{sender}}", "{{message}}", "{{match_0}}", "{{match_1}}").forEach { variable ->
-            AssistChip(onClick = { onInsert(variable) }, label = { Text(variable, fontFamily = FontFamily.Monospace) })
+        variables.forEach { variable -> AssistChip(onClick = { onInsert(variable) }, label = { Text(variable, fontFamily = FontFamily.Monospace) }) }
+    }
+}
+
+@Composable
+private fun VariablePicker(pattern: String, onInsert: (String) -> Unit) {
+    val groupCount = remember(pattern) { runCatching { "\\((?!\\?)".toRegex().findAll(pattern).count() }.getOrDefault(0) }
+    val namedGroups = remember(pattern) { "\\(\\?<([a-zA-Z][a-zA-Z0-9_]*)>".toRegex().findAll(pattern).map { it.groupValues[1] }.distinct().toList() }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Message data", style = MaterialTheme.typography.labelLarge)
+        Text("{{sender}} who sent it · {{message}} the original SMS · {{timestamp}} arrival time", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ChipRow(listOf("{{sender}}", "{{message}}", "{{timestamp}}"), onInsert)
+        Text("Regex captures", style = MaterialTheme.typography.labelLarge)
+        Text("{{match_0}} whole match · {{match_N}} group N · named groups appear here automatically", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ChipRow((0..groupCount).map { "{{match_$it}}" }, onInsert)
+        if (namedGroups.isNotEmpty()) ChipRow(namedGroups.map { "{{$it}}" }, onInsert)
+    }
+}
+
+private sealed interface MessagePreview {
+    data class Rendered(val text: String) : MessagePreview
+    data object SenderMismatch : MessagePreview
+    data object NoMatch : MessagePreview
+    data class Invalid(val reason: String) : MessagePreview
+}
+
+@Composable
+private fun MessagePreviewCard(preview: MessagePreview) {
+    val (label, value, isError) = when (preview) {
+        is MessagePreview.Rendered -> Triple("[ PREVIEW ]", preview.text, false)
+        MessagePreview.SenderMismatch -> Triple("[ PREVIEW ]", "Sample sender VM-KOTAKB-S does not match this rule.", true)
+        MessagePreview.NoMatch -> Triple("[ PREVIEW ]", "Sample message does not match this pattern.", true)
+        is MessagePreview.Invalid -> Triple("[ PREVIEW ]", preview.reason, true)
+    }
+    Card(
+        border = BorderStroke(1.dp, if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelLarge, color = if (isError) MaterialTheme.colorScheme.error else Success)
+            Text("Sample: OTP is 123456 · from VM-KOTAKB-S", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
