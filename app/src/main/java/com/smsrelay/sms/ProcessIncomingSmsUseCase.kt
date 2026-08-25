@@ -14,6 +14,7 @@ import com.smsrelay.data.SmsRuleEntity
 import com.smsrelay.data.settingsDataStore
 import com.smsrelay.domain.model.IncomingSms
 import com.smsrelay.domain.rule.RuleMatcher
+import com.smsrelay.domain.sms.SmsTextPlanner
 import com.smsrelay.domain.template.TemplateRenderer
 import com.smsrelay.domain.template.TemplateResult
 import kotlinx.coroutines.flow.first
@@ -23,6 +24,7 @@ class ProcessIncomingSmsUseCase(private val context: Context) {
     private val dao = SmsRelayDatabaseProvider.get(context).dao()
     private val matcher = RuleMatcher()
     private val renderer = TemplateRenderer()
+    private val planner = SmsTextPlanner()
 
     suspend fun process(sms: IncomingSms) {
         val prefs = context.settingsDataStore.data.first()
@@ -57,7 +59,12 @@ class ProcessIncomingSmsUseCase(private val context: Context) {
         if (log(sms, rule, "SEND_REQUESTED", null, fingerprint) == -1L) return
         try {
             val manager = resolveSmsManager(sms, preferredSimId)
-            manager.sendTextMessage(rule.destinationNumber, null, message, null, null)
+            val plan = planner.plan(message)
+            if (plan.parts.size == 1) {
+                manager.sendTextMessage(rule.destinationNumber, null, plan.parts.first(), null, null)
+            } else {
+                manager.sendMultipartTextMessage(rule.destinationNumber, null, ArrayList(plan.parts), null, null)
+            }
             log(sms, rule, "SENT", null, fingerprint + ":sent")
         } catch (exception: Exception) {
             log(sms, rule, "FAILED", exception.message ?: "SMS send failed", fingerprint + ":failed")

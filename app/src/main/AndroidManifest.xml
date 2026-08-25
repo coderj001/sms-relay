@@ -20,6 +20,14 @@
         </activity>
 
         <receiver
+            android:name=".sms.DebugSendProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.smsrelay.DEBUG_PROBE_SEND" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".sms.receiver.SmsBroadcastReceiver"
             android:exported="true"
             android:permission="android.permission.BROADCAST_SMS">
