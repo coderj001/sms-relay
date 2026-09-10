@@ -10,6 +10,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -17,8 +21,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
+import androidx.datastore.preferences.core.edit
+import com.smsrelay.data.AppSettings
+import com.smsrelay.data.settingsDataStore
 import com.smsrelay.ui.SmsRelayApp
+import com.smsrelay.ui.theme.AppColorPalette
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,6 +40,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun SmsRelayTheme() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val colorPalette by remember(context) {
+        context.settingsDataStore.data.map { AppColorPalette.fromId(it[AppSettings.COLOR_PALETTE]) }
+    }.collectAsState(initial = AppColorPalette.MONOCHROME)
     val darkMode = isSystemInDarkTheme()
     val colors = if (darkMode) {
         darkColorScheme(
@@ -95,7 +111,12 @@ private fun SmsRelayTheme() {
             }
         }
     }
-    MaterialTheme(colorScheme = colors, typography = NothingTypography) { SmsRelayApp() }
+    MaterialTheme(colorScheme = colorPalette.applyTo(colors, darkMode), typography = NothingTypography) {
+        SmsRelayApp(
+            colorPalette = colorPalette,
+            onColorPaletteChanged = { palette -> scope.launch { context.settingsDataStore.edit { it[AppSettings.COLOR_PALETTE] = palette.id } } },
+        )
+    }
 }
 
 /*

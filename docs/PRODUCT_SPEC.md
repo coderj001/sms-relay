@@ -132,25 +132,32 @@ The tester must not invoke the SMS sender.
 Show:
 
 ```text
-time
-rule name
-match status
-send status
-masked destination
-failure reason when applicable
+received and recorded timestamps, including seconds and local time zone
+rule name and rule ID
+execution event ID and stored status code
+separate send-requested, submitted, failed, and blocked states
+masked sender and destination
+outcome summary and failure reason when applicable
 ```
 
-Avoid storing full incoming content by default.
+Search includes rule names, masked numbers, status codes, reasons, and event/rule IDs.
+A send request and its outcome remain separate execution events.
+Submitted means handed to Android for sending, not confirmed delivery.
+Message bodies are not stored; details explain this privacy limitation.
 
 ### Settings
 
 MVP settings:
 
 - master automation switch
+- app color palette: Monochrome (default), Ocean, Teal, Violet, Rose, or Amber
 - permission status
 - history retention
 - privacy information
 - app version
+
+Color palette changes apply immediately and are saved locally. Each palette supports
+the device's light/dark mode; success, warning, and error colors stay unchanged.
 
 ## 6. Rule Behavior
 
