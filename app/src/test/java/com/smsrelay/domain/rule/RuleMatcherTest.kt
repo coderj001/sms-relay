@@ -42,6 +42,69 @@ class RuleMatcherTest {
         assertEquals(listOf("ab1234", "500.00"), evaluation.match.groups)
     }
 
+    @Test
+    fun `wildcard filter matches senders with varying prefix and suffix`() {
+        val r = rule(sender = "*-KOTAKB-*")
+        assertTrue(matcher.evaluate(r, sms(sender = "VM-KOTAKB-S")) is RuleEvaluation.Matched)
+        assertTrue(matcher.evaluate(r, sms(sender = "AX-KOTAKB-P")) is RuleEvaluation.Matched)
+    }
+
+    @Test
+    fun `wildcard filter rejects non-matching sender`() {
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "*-KOTAKB-*"), sms(sender = "VM-HDFCB-S")))
+    }
+
+    @Test
+    fun `question mark matches exactly one character`() {
+        assertTrue(matcher.evaluate(rule(sender = "BAN?"), sms(sender = "BANK")) is RuleEvaluation.Matched)
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "BAN?"), sms(sender = "BANKS")))
+    }
+
+    @Test
+    fun `filter without wildcards stays exact match`() {
+        assertTrue(matcher.evaluate(rule(sender = "*"), sms(sender = "ANYTHING")) is RuleEvaluation.Matched)
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "KOTAKB"), sms(sender = "VM-KOTAKB-S")))
+    }
+
+    @Test
+    fun `wildcard filter with blank sender does not match`() {
+        assertEquals(RuleEvaluation.SenderMismatch, matcher.evaluate(rule(sender = "*-KOTAKB-*"), sms(sender = "")))
+    }
+
+    @Test
+    fun `populates named groups on match`() {
+        val evaluation = matcher.evaluate(rule(regex = "(?<price>INR\\s*\\d+) total"), sms().copy(body = "INR 500 total"))
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(mapOf<String, String?>("price" to "INR 500"), evaluation.match.namedGroups)
+    }
+
+    @Test
+    fun `unmatched optional named group maps to null`() {
+        val evaluation = matcher.evaluate(rule(regex = "(?<code>[A-Z]{4})?(?:x)?INR"), sms().copy(body = "INR"))
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(mapOf<String, String?>("code" to null), evaluation.match.namedGroups)
+    }
+
+    @Test
+    fun `pseudo named group declaration does not crash evaluation`() {
+        val evaluation = matcher.evaluate(rule(regex = "[(?<code>].*"), sms())
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+    }
+
+    @Test
+    fun `escaped pseudo declaration maps to null`() {
+        val evaluation = matcher.evaluate(rule(regex = "\\(\\?<code>x*(?<real>A)"), sms().copy(body = "(?<code>xA"))
+
+        assertTrue(evaluation is RuleEvaluation.Matched)
+        evaluation as RuleEvaluation.Matched
+        assertEquals(mapOf<String, String?>("real" to "A"), evaluation.match.namedGroups)
+    }
+
     private fun rule(sender: String? = null, regex: String = ".*") = SmsRule(
         id = 1,
         name = "Credit relay",

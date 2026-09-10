@@ -4,12 +4,16 @@ package com.smsrelay.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.telephony.SubscriptionInfo
+import android.telephony.SubscriptionManager
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,18 +24,16 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Search
@@ -57,15 +59,18 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -87,12 +92,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.smsrelay.data.AppSettings
 import com.smsrelay.data.SmsRelayDatabaseProvider
+import com.smsrelay.data.ExecutionLogWithRule
 import com.smsrelay.data.SmsRuleEntity
+import com.smsrelay.data.settingsDataStore
 import com.smsrelay.domain.model.IncomingSms
-import com.smsrelay.domain.model.RuleMatch
+import com.smsrelay.domain.model.RuleEvaluation
+import com.smsrelay.domain.model.SmsRule
+import com.smsrelay.domain.rule.RuleMatcher
 import com.smsrelay.domain.template.TemplateRenderer
 import com.smsrelay.domain.template.TemplateResult
+import androidx.compose.runtime.collectAsState
+import androidx.datastore.preferences.core.edit
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.regex.Pattern
 
@@ -112,7 +125,6 @@ private data class RuleDraft(
 fun SmsRelayApp() {
     var screen by remember { mutableStateOf(AppScreen.RULES) }
     var automationEnabled by remember { mutableStateOf(true) }
-    var historyItems by remember { mutableStateOf(sampleHistoryItems()) }
     val context = LocalContext.current
     val dao = remember(context) { SmsRelayDatabaseProvider.get(context).dao() }
     val scope = rememberCoroutineScope()
@@ -128,6 +140,24 @@ fun SmsRelayApp() {
     var ruleToDelete by remember { mutableStateOf<SmsRuleEntity?>(null) }
 
     LaunchedEffect(dao) { rules = dao.allRules() }
+    val historyItems by remember(dao) { dao.allExecutionLogs() }.collectAsState(initial = emptyList())
+    var selectedHistory by remember { mutableStateOf<HistoryItem?>(null) }
+    var phoneStateAllowed by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) }
+    val phoneStateLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { phoneStateAllowed = it }
+    val defaultSimId by remember { context.settingsDataStore.data.map { it[AppSettings.DEFAULT_SIM_SUBSCRIPTION_ID] ?: AppSettings.AUTO_SIM } }.collectAsState(initial = AppSettings.AUTO_SIM)
+    val activeSims = remember(phoneStateAllowed) {
+        if (!phoneStateAllowed) emptyList()
+        else runCatching { SubscriptionManager.from(context).activeSubscriptionInfoList.orEmpty() }.getOrDefault(emptyList())
+    }
+
+    BackHandler(enabled = screen != AppScreen.RULES) {
+        when (screen) {
+            AppScreen.TESTER -> screen = AppScreen.EDITOR
+            AppScreen.DETAILS -> screen = AppScreen.HISTORY
+            AppScreen.ONBOARDING -> screen = AppScreen.SETTINGS
+            else -> screen = AppScreen.RULES
+        }
+    }
 
     fun saveRule(existing: SmsRuleEntity?, draft: RuleDraft) {
         scope.launch {
@@ -160,8 +190,6 @@ fun SmsRelayApp() {
         when (screen) {
             AppScreen.RULES -> RulesScreen(
                 contentPadding = innerPadding,
-                automationEnabled = automationEnabled,
-                onAutomationChanged = { automationEnabled = it },
                 rules = rules,
                 onCreate = { editingRule = null; screen = AppScreen.EDITOR },
                 onEdit = { editingRule = it; screen = AppScreen.EDITOR },
@@ -180,16 +208,21 @@ fun SmsRelayApp() {
                 contentPadding = innerPadding,
                 automationEnabled = automationEnabled,
                 permissionsReady = receiveAllowed && sendAllowed,
-                items = historyItems,
-                onClearHistory = { historyItems = emptyList() },
+                items = historyItems.map { it.toHistoryItem() },
+                onClearHistory = { scope.launch { dao.clearExecutionLogs() } },
                 onReviewPermissions = { screen = AppScreen.ONBOARDING },
-                onOpenDetails = { screen = AppScreen.DETAILS },
+                onOpenDetails = { selectedHistory = it; screen = AppScreen.DETAILS },
             )
             AppScreen.SETTINGS -> SettingsScreen(
                 contentPadding = innerPadding,
                 automationEnabled = automationEnabled,
                 onAutomationChanged = { automationEnabled = it },
                 onOpenOnboarding = { screen = AppScreen.ONBOARDING },
+                defaultSimId = defaultSimId,
+                phoneStateAllowed = phoneStateAllowed,
+                activeSims = activeSims,
+                onRequestPhoneState = { phoneStateLauncher.launch(Manifest.permission.READ_PHONE_STATE) },
+                onDefaultSimChanged = { id -> scope.launch { context.settingsDataStore.edit { it[AppSettings.DEFAULT_SIM_SUBSCRIPTION_ID] = id } } },
             )
             AppScreen.EDITOR -> RuleEditorScreen(
                 rule = editingRule,
@@ -198,7 +231,7 @@ fun SmsRelayApp() {
                 onTest = { testerDraft = it; screen = AppScreen.TESTER },
             )
             AppScreen.TESTER -> RuleTesterScreen(draft = testerDraft, onBack = { screen = AppScreen.EDITOR })
-            AppScreen.DETAILS -> ExecutionDetailsScreen(onBack = { screen = AppScreen.HISTORY })
+            AppScreen.DETAILS -> ExecutionDetailsScreen(item = selectedHistory, onBack = { screen = AppScreen.HISTORY })
             AppScreen.ONBOARDING -> PermissionOnboardingScreen(
                 receiveAllowed = receiveAllowed,
                 sendAllowed = sendAllowed,
@@ -249,8 +282,6 @@ private fun NavigationLabel(label: String, selected: Boolean) {
 @Composable
 private fun RulesScreen(
     contentPadding: PaddingValues,
-    automationEnabled: Boolean,
-    onAutomationChanged: (Boolean) -> Unit,
     rules: List<SmsRuleEntity>,
     onCreate: () -> Unit,
     onEdit: (SmsRuleEntity) -> Unit,
@@ -260,30 +291,22 @@ private fun RulesScreen(
     sendAllowed: Boolean,
     onOpenPermissions: () -> Unit,
 ) {
+    val permissionsReady = receiveAllowed && sendAllowed
     Scaffold(
+        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
         topBar = { AppTopBar(title = "SMS Rules") },
         floatingActionButton = {
             ExtendedFloatingActionButton(onClick = onCreate, icon = { Icon(Icons.Filled.Add, null) }, text = { Text("Add Rule") })
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(contentPadding).padding(padding)
+            modifier = Modifier.fillMaxSize().padding(padding)
                 .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Text("${rules.count { it.enabled }.toString().padStart(2, '0')} ACTIVE", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text("ENABLED RELAY RULES", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(16.dp))
-            Text("Automatically relay an SMS only when its sender and message match a rule.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(32.dp))
-            AutomationCard(automationEnabled, onAutomationChanged)
-            Spacer(Modifier.height(24.dp))
-            PermissionStatusCard(receiveAllowed, sendAllowed, onOpenPermissions)
-            Spacer(Modifier.height(32.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("YOUR RULES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                TextButton(onClick = onCreate, contentPadding = PaddingValues(horizontal = 4.dp)) { Text("+ ADD", style = MaterialTheme.typography.labelLarge) }
+            if (!permissionsReady) {
+                PermissionWarningCard(receiveAllowed, sendAllowed, onOpenPermissions)
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(8.dp))
             if (rules.isEmpty()) {
                 Text("No rules yet. Add a rule to start relaying matching SMS messages.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
@@ -298,42 +321,18 @@ private fun RulesScreen(
 }
 
 @Composable
-private fun AutomationCard(enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("MASTER AUTOMATION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                Text(if (enabled) "ARMED" else "PAUSED", style = MaterialTheme.typography.headlineSmall)
-                Text(if (enabled) "Matching messages can be relayed." else "No incoming message will be relayed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(if (enabled) "ON" else "OFF", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                Switch(checked = enabled, onCheckedChange = onCheckedChange)
-            }
-        }
-    }
-}
-
-@Composable
-private fun PermissionStatusCard(receiveAllowed: Boolean, sendAllowed: Boolean, onOpenPermissions: () -> Unit) {
-    val ready = receiveAllowed && sendAllowed
+private fun PermissionWarningCard(receiveAllowed: Boolean, sendAllowed: Boolean, onOpenPermissions: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        border = BorderStroke(1.dp, if (ready) MaterialTheme.colorScheme.outlineVariant else MaterialTheme.colorScheme.tertiary),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (ready) "[ SYSTEM READY ]" else "[ ACTION REQUIRED ]", style = MaterialTheme.typography.labelLarge, color = if (ready) Success else MaterialTheme.colorScheme.tertiary)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Permissions required", style = MaterialTheme.typography.titleSmall)
+                Text(listOfNotNull("Receive SMS".takeIf { !receiveAllowed }, "Send SMS".takeIf { !sendAllowed }).joinToString(", ") + " not granted", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (!ready) {
-                DetailRow("RECEIVE SMS", if (receiveAllowed) "GRANTED" else "NOT GRANTED")
-                DetailRow("SEND SMS", if (sendAllowed) "GRANTED" else "NOT GRANTED")
-                OutlinedButton(onClick = onOpenPermissions) { Text("CONFIGURE", style = MaterialTheme.typography.labelLarge) }
-            } else {
-                Text("Both permissions are granted. Rules can process incoming messages.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            TextButton(onClick = onOpenPermissions) { Text("Fix") }
         }
     }
 }
@@ -348,34 +347,24 @@ private fun RuleCard(
     Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(rule.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    }
-                    StatusPill(if (rule.enabled) "Enabled" else "Disabled", if (rule.enabled) Success else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = rule.enabled, onCheckedChange = { onEnabledChange(rule, it) })
+                Text(rule.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                AppSwitch(checked = rule.enabled, onCheckedChange = { onEnabledChange(rule, it) })
                 IconButton(onClick = { onEdit(rule) }) { Icon(Icons.Filled.Edit, "Edit rule") }
                 IconButton(onClick = { onDelete(rule) }) { Icon(Icons.Filled.Delete, "Delete rule") }
             }
-            RuleValue("Incoming", rule.senderFilter ?: "Any number", icon = Icons.Filled.Phone)
-            RuleValue("Pattern", rule.messageRegex, mono = true, icon = Icons.Filled.FilterAlt)
-            RuleValue("Send to", rule.destinationNumber, icon = Icons.Filled.Send)
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            Text("[ SENT ]  TODAY, 8:42 PM", color = Success, style = MaterialTheme.typography.labelMedium)
-            IconButton(onClick = { onDelete(rule) }, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Filled.MoreVert, "More options") }
+            RuleValue("Incoming", rule.senderFilter ?: "Any number")
+            RuleValue("Pattern", rule.messageRegex, mono = true)
+            RuleValue("Send to", rule.destinationNumber)
         }
     }
 }
 
 @Composable
-private fun RuleValue(label: String, value: String, mono: Boolean = false, icon: ImageVector? = null) {
+private fun RuleValue(label: String, value: String, mono: Boolean = false) {
     Spacer(Modifier.height(10.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column {
-            Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+    Column {
+        Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = if (mono) FontFamily.Monospace else FontFamily.Default, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -397,6 +386,19 @@ private fun RuleEditorScreen(
     val patternError = remember(pattern) { runCatching { Regex(pattern) }.exceptionOrNull()?.message }
     val sampleMatch = remember(pattern) { runCatching { Regex(pattern).find("OTP is 123456") }.getOrNull() }
     val broadRule = anyNumber && pattern.trim() == ".*"
+    val preview = remember(pattern, message, anyNumber, incomingNumber) {
+        val sample = IncomingSms("VM-KOTAKB-S", "OTP is 123456", System.currentTimeMillis(), null)
+        val draftRule = SmsRule(0, "preview", true, if (anyNumber) null else incomingNumber.trim().takeIf(String::isNotEmpty), pattern, "", message, 0L, 0L)
+        when (val evaluation = RuleMatcher().evaluate(draftRule, sample)) {
+            is RuleEvaluation.Matched -> when (val rendered = TemplateRenderer().render(message, sample, evaluation.match)) {
+                is TemplateResult.Success -> MessagePreview.Rendered(rendered.value)
+                is TemplateResult.UnknownVariable -> MessagePreview.Invalid("Unknown variable {{${rendered.variable}}}")
+            }
+            RuleEvaluation.SenderMismatch -> MessagePreview.SenderMismatch
+            RuleEvaluation.MessageMismatch -> MessagePreview.NoMatch
+            is RuleEvaluation.InvalidPattern -> MessagePreview.Invalid(evaluation.message)
+        }
+    }
 
     val draft = RuleDraft(
         name = name,
@@ -430,7 +432,7 @@ private fun RuleEditorScreen(
                     label = { Text("Incoming phone number") },
                     placeholder = { Text("Any number") },
                     enabled = !anyNumber,
-                    supportingText = { Text("Only SMS messages received from this number will be checked.") },
+                    supportingText = { Text("Exact sender or wildcard: * = any characters, ? = one. Example: *-KOTAKB-*. Empty = any sender.") },
                     singleLine = true,
                 )
                 FilterChip(selected = anyNumber, onClick = { anyNumber = !anyNumber }, label = { Text("Any number") })
@@ -460,15 +462,15 @@ private fun RuleEditorScreen(
                 FlowArrow()
                 FlowStep("4", "Outgoing message")
                 OutlinedTextField(message, { message = it }, Modifier.fillMaxWidth(), label = { Text("Message to send") }, minLines = 4, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
-                Text("Available variables", style = MaterialTheme.typography.labelLarge)
-                VariableChips(pattern = pattern, onInsert = { message += it })
+                VariablePicker(pattern = pattern, onInsert = { message += it })
+                MessagePreviewCard(preview = preview)
                 HorizontalDivider(Modifier.padding(top = 6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Enable Rule", style = MaterialTheme.typography.titleMedium)
                         Text("Enabled rules can automatically send SMS messages.", style = MaterialTheme.typography.bodySmall)
                     }
-                    Switch(enabled, { enabled = it })
+                    AppSwitch(enabled, { enabled = it })
                 }
                 if (broadRule) WarningCard()
                 Spacer(Modifier.height(12.dp))
@@ -519,23 +521,56 @@ private fun RegexResultCard(match: MatchResult?) {
 }
 
 @Composable
-private fun VariableChips(pattern: String, onInsert: (String) -> Unit) {
-    val variables = remember(pattern) { templateVariablesFor(pattern) }
+private fun ChipRow(variables: List<String>, onInsert: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        variables.forEach { variable ->
-            AssistChip(onClick = { onInsert(variable) }, label = { Text(variable, fontFamily = FontFamily.Monospace) })
-        }
+        variables.forEach { variable -> AssistChip(onClick = { onInsert(variable) }, label = { Text(variable, fontFamily = FontFamily.Monospace) }) }
     }
 }
 
-private fun templateVariablesFor(pattern: String): List<String> {
-    val captures = runCatching { Pattern.compile(pattern).matcher("").groupCount() }.getOrDefault(0)
-    return buildList {
-        add("{{sender}}")
-        add("{{message}}")
-        add("{{match_0}}")
-        repeat(captures) { add("{{match_${it + 1}}}") }
-        add("{{timestamp}}")
+@Composable
+private fun VariablePicker(pattern: String, onInsert: (String) -> Unit) {
+    val namedGroups = remember(pattern) { "\\(\\?<([a-zA-Z][a-zA-Z0-9_]*)>".toRegex().findAll(pattern).map { it.groupValues[1] }.distinct().toList() }
+    val groupCount = remember(pattern) {
+        runCatching { Pattern.compile(pattern).matcher("").groupCount() }.getOrElse {
+            val positional = runCatching { "\\((?!\\?)".toRegex().findAll(pattern).count() }.getOrDefault(0)
+            positional + namedGroups.size
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Message data", style = MaterialTheme.typography.labelLarge)
+        Text("{{sender}} who sent it · {{message}} the original SMS · {{timestamp}} arrival time", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ChipRow(listOf("{{sender}}", "{{message}}", "{{timestamp}}"), onInsert)
+        Text("Regex captures", style = MaterialTheme.typography.labelLarge)
+        Text("{{match_0}} whole match · {{match_N}} group N · named groups appear here automatically", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ChipRow((0..groupCount).map { "{{match_$it}}" }, onInsert)
+        if (namedGroups.isNotEmpty()) ChipRow(namedGroups.map { "{{$it}}" }, onInsert)
+    }
+}
+
+private sealed interface MessagePreview {
+    data class Rendered(val text: String) : MessagePreview
+    data object SenderMismatch : MessagePreview
+    data object NoMatch : MessagePreview
+    data class Invalid(val reason: String) : MessagePreview
+}
+
+@Composable
+private fun MessagePreviewCard(preview: MessagePreview) {
+    val (label, value, isError) = when (preview) {
+        is MessagePreview.Rendered -> Triple("[ PREVIEW ]", preview.text, false)
+        MessagePreview.SenderMismatch -> Triple("[ PREVIEW ]", "Sample sender VM-KOTAKB-S does not match this rule.", true)
+        MessagePreview.NoMatch -> Triple("[ PREVIEW ]", "Sample message does not match this pattern.", true)
+        is MessagePreview.Invalid -> Triple("[ PREVIEW ]", preview.reason, true)
+    }
+    Card(
+        border = BorderStroke(1.dp, if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelLarge, color = if (isError) MaterialTheme.colorScheme.error else Success)
+            Text("Sample: OTP is 123456 · from VM-KOTAKB-S", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
@@ -572,37 +607,41 @@ private fun RuleTesterScreen(draft: RuleDraft?, onBack: () -> Unit) {
 
 @Composable
 private fun TestResultCard(rule: RuleDraft, sender: String, message: String) {
-    val senderMatched = rule.senderFilter.isNullOrBlank() || rule.senderFilter.trim().equals(sender.trim(), ignoreCase = true)
-    val regexMatch = runCatching { Regex(rule.messageRegex).find(message) }.getOrNull()
-    val matched = senderMatched && regexMatch != null
+    val sample = remember(sender, message) { IncomingSms(sender.trim().takeIf(String::isNotEmpty), message, System.currentTimeMillis(), null) }
+    val draftRule = SmsRule(0, "test", true, rule.senderFilter?.trim()?.takeIf(String::isNotEmpty), rule.messageRegex, "", rule.outputTemplate, 0L, 0L)
+    val evaluation = remember(rule.senderFilter, rule.messageRegex, rule.outputTemplate, sender, message) { RuleMatcher().evaluate(draftRule, sample) }
     Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (matched) "RULE MATCHED" else "RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = if (matched) Success else MaterialTheme.colorScheme.error)
-            if (matched) {
-                Text("Sender  ·  Matched")
-                Text("Regex  ·  Matched")
-                Text("Captured values", style = MaterialTheme.typography.labelLarge)
-                CodeText("match_0: ${regexMatch?.value.orEmpty()}")
-                regexMatch?.groups?.drop(1)?.forEachIndexed { index, group ->
-                    CodeText("match_${index + 1}: ${group?.value.orEmpty()}")
+            when (evaluation) {
+                is RuleEvaluation.Matched -> {
+                    Text("RULE MATCHED", style = MaterialTheme.typography.headlineSmall, color = Success)
+                    Text("Sender  ·  Matched")
+                    Text("Regex  ·  Matched")
+                    Text("Captured values", style = MaterialTheme.typography.labelLarge)
+                    CodeText("match_0: ${evaluation.match.value}")
+                    evaluation.match.groups.forEachIndexed { index, group -> CodeText("match_${index + 1}: ${group.orEmpty()}") }
+                    evaluation.match.namedGroups.forEach { (name, value) -> CodeText("$name: ${value.orEmpty()}") }
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                    Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
+                    when (val rendered = TemplateRenderer().render(rule.outputTemplate, sample, evaluation.match)) {
+                        is TemplateResult.Success -> CodeText(rendered.value)
+                        is TemplateResult.UnknownVariable -> CodeText("Unknown variable {{${rendered.variable}}}")
+                    }
                 }
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                Text("Outgoing SMS preview", style = MaterialTheme.typography.titleMedium)
-                val preview = TemplateRenderer().render(
-                    rule.outputTemplate,
-                    IncomingSms(sender, message, System.currentTimeMillis(), null),
-                    RuleMatch(regexMatch!!.value, regexMatch.groups.drop(1).map { it?.value }),
-                )
-                when (preview) {
-                    is TemplateResult.Success -> CodeText(preview.value)
-                    is TemplateResult.UnknownVariable -> Text(
-                        "Unknown variable: {{${preview.variable}}}",
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                RuleEvaluation.SenderMismatch -> {
+                    Text("RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                    Text("Sender condition: Did not match")
+                    Text("Regex: Not evaluated")
                 }
-            } else {
-                Text(if (senderMatched) "Sender condition: Matched" else "Sender condition: Did not match")
-                Text(if (regexMatch != null) "Regex: Matched" else "Regex: Did not match")
+                RuleEvaluation.MessageMismatch -> {
+                    Text("RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                    Text("Sender condition: Matched")
+                    Text("Regex: Did not match")
+                }
+                is RuleEvaluation.InvalidPattern -> {
+                    Text("RULE DID NOT MATCH", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                    Text("Invalid pattern: ${evaluation.message}")
+                }
             }
         }
     }
@@ -610,12 +649,29 @@ private fun TestResultCard(rule: RuleDraft, sender: String, message: String) {
 
 private data class HistoryItem(val rule: String, val status: HistoryFilter, val sender: String, val destination: String, val time: String, val group: String, val detail: String = "")
 
-private fun sampleHistoryItems() = listOf(
-    HistoryItem("Bank OTP Forward", HistoryFilter.SENT, "+91 98765 43210", "••••••7890", "Today, 10:42 PM", "Today"),
-    HistoryItem("Bank Credit Alert", HistoryFilter.MATCHED, "AD-HDFCBK", "••••••3210", "Today, 8:42 PM", "Today"),
-    HistoryItem("Server Alert", HistoryFilter.FAILED, "Alert service", "••••••4567", "Today, 7:16 PM", "Today", "No mobile network"),
-    HistoryItem("Payment Forward", HistoryFilter.BLOCKED, "+91 90000 11111", "••••••2222", "Yesterday, 6:03 PM", "Yesterday", "Rate limit"),
-)
+private fun ExecutionLogWithRule.toHistoryItem(): HistoryItem {
+    val created = java.time.Instant.ofEpochMilli(log.createdAt).atZone(java.time.ZoneId.systemDefault())
+    val today = java.time.LocalDate.now()
+    val group = when (created.toLocalDate()) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> created.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy"))
+    }
+    return HistoryItem(
+        rule = ruleName ?: "Unknown rule",
+        status = when (log.status) {
+            "SENT" -> HistoryFilter.SENT
+            "FAILED" -> HistoryFilter.FAILED
+            "RATE_LIMITED", "PERMISSION_MISSING" -> HistoryFilter.BLOCKED
+            else -> HistoryFilter.MATCHED
+        },
+        sender = log.senderPreview ?: "Unknown",
+        destination = log.destinationMasked ?: "—",
+        time = "$group, ${created.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))}",
+        group = group,
+        detail = log.detail.orEmpty(),
+    )
+}
 
 @Composable
 private fun HistoryScreen(
@@ -625,7 +681,7 @@ private fun HistoryScreen(
     items: List<HistoryItem>,
     onClearHistory: () -> Unit,
     onReviewPermissions: () -> Unit,
-    onOpenDetails: () -> Unit,
+    onOpenDetails: (HistoryItem) -> Unit,
 ) {
     var filter by remember { mutableStateOf(HistoryFilter.ALL) }
     var query by remember { mutableStateOf("") }
@@ -633,19 +689,26 @@ private fun HistoryScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var clearDialog by remember { mutableStateOf(false) }
     val visible = items.filter { (filter == HistoryFilter.ALL || it.status == filter) && (query.isBlank() || it.rule.contains(query, true) || it.sender.contains(query, true) || it.destination.contains(query)) }
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { if (searching) OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") }) else Column { Text("History", fontWeight = FontWeight.SemiBold); Text("View matched rules, sent messages, failures, and blocked actions.", style = MaterialTheme.typography.labelSmall) } },
-            actions = {
-                IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(Icons.Filled.Search, "Search history") }
-                Box {
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "History options") }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) { DropdownMenuItem(text = { Text("Clear History") }, onClick = { menuOpen = false; clearDialog = true }) }
-                }
-            },
-        )
+    Scaffold(
+        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
+        topBar = {
+            AppTopBar(
+                title = "History",
+                titleContent = if (searching) {
+                    {
+                        OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search history") })
+                    }
+                } else null,
+                actions = {
+                    IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, "Search history") }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, "History options") }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) { DropdownMenuItem(text = { Text("Clear History") }, onClick = { menuOpen = false; clearDialog = true }) }
+                    }
+                },
+            )
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(contentPadding).padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding)) {
             if (!permissionsReady) CompactBanner("SMS permissions are incomplete", "Review Permissions", MaterialTheme.colorScheme.tertiary, onReviewPermissions)
             if (!automationEnabled) CompactBanner("Automation is currently off", null, MaterialTheme.colorScheme.onSurfaceVariant, {})
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -661,7 +724,7 @@ private fun HistoryScreen(
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     visible.groupBy { it.group }.forEach { (group, records) ->
                         Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
-                        records.forEach { HistoryEntry(it, onOpenDetails) }
+                        records.forEach { HistoryEntry(it, { onOpenDetails(it) }) }
                     }
                 }
             }
@@ -672,13 +735,7 @@ private fun HistoryScreen(
 
 @Composable
 private fun HistoryEntry(item: HistoryItem, onClick: () -> Unit) {
-    val (_, color, label) = when (item.status) {
-        HistoryFilter.SENT -> Triple(Icons.Filled.CheckCircle, Success, "SMS sent successfully")
-        HistoryFilter.FAILED -> Triple(Icons.Filled.Error, MaterialTheme.colorScheme.error, "Failed to send")
-        HistoryFilter.BLOCKED -> Triple(Icons.Filled.Warning, MaterialTheme.colorScheme.tertiary, "Blocked")
-        HistoryFilter.MATCHED -> Triple(Icons.Filled.Rule, MaterialTheme.colorScheme.secondary, "Rule matched")
-        HistoryFilter.ALL -> Triple(Icons.Filled.History, MaterialTheme.colorScheme.onSurfaceVariant, "Activity")
-    }
+    val (color, label) = statusMeta(item.status)
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -697,20 +754,31 @@ private fun CompactBanner(message: String, action: String?, color: Color, onActi
 }
 
 @Composable
-private fun ExecutionDetailsScreen(onBack: () -> Unit) {
+private fun ExecutionDetailsScreen(item: HistoryItem?, onBack: () -> Unit) {
+    if (item == null) { onBack(); return }
+    val (color, label) = statusMeta(item.status)
     Scaffold(topBar = { AppTopBar("Execution Details", onBack) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            DetailSection("Rule") { Text("Bank Credit Alert", style = MaterialTheme.typography.titleMedium) }
-            DetailSection("Incoming message") {
-                DetailRow("Sender", "AD-HDFCBK")
-                DetailRow("Received", "16 Aug 2026, 8:42 PM")
-                CodeText("Your account has been credited INR •••••")
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Card(Modifier.fillMaxWidth(), border = BorderStroke(1.dp, color), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("[ ${label.uppercase()} ]", color = color, style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.weight(1f))
+                    Text(item.time.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
+                    Text(item.rule, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (item.detail.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(item.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
-            DetailSection("Match") { DetailRow("Sender condition", "Matched"); DetailRow("Regex", "Matched") }
-            DetailSection("Outgoing") {
-                DetailRow("Destination", "••••••3210")
-                CodeText("Payment received: ₹5,000")
-                StatusPill("Sent successfully", MaterialTheme.colorScheme.primary)
+            DetailSection("Message") {
+                DetailRow("From", item.sender)
+            }
+            DetailSection("Delivery") {
+                DetailRow("To", item.destination)
+                DetailRow("Status", label)
             }
         }
     }
@@ -768,13 +836,34 @@ private fun PermissionCard(icon: ImageVector, title: String, description: String
 }
 
 @Composable
-private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boolean, onAutomationChanged: (Boolean) -> Unit, onOpenOnboarding: () -> Unit) {
+private fun SettingsScreen(
+    contentPadding: PaddingValues,
+    automationEnabled: Boolean,
+    onAutomationChanged: (Boolean) -> Unit,
+    onOpenOnboarding: () -> Unit,
+    defaultSimId: Int,
+    phoneStateAllowed: Boolean,
+    activeSims: List<SubscriptionInfo>,
+    onRequestPhoneState: () -> Unit,
+    onDefaultSimChanged: (Int) -> Unit,
+) {
     var storeFullContent by remember { mutableStateOf(false) }
-    Scaffold(topBar = { AppTopBar("Settings") }) { padding ->
-        Column(Modifier.fillMaxSize().padding(contentPadding).padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    var showSimDialog by remember { mutableStateOf(false) }
+    Scaffold(
+        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
+        topBar = { AppTopBar("Settings") },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             SettingGroup("Automation") {
                 SettingToggle("Master automation", "Stop all automatic sends immediately", automationEnabled, onAutomationChanged)
-                SettingRow("Default SIM", "SIM 1")
+                SettingRow(
+                    "Default SIM",
+                    when {
+                        !phoneStateAllowed -> "Permission required"
+                        else -> activeSims.firstOrNull { it.subscriptionId == defaultSimId }?.let { "SIM ${it.simSlotIndex + 1} · ${it.displayName}" } ?: "Auto · reply on receiving SIM"
+                    },
+                    onClick = { if (phoneStateAllowed) showSimDialog = true else onRequestPhoneState() },
+                )
             }
             SettingGroup("Safety") {
                 SettingRow("Automatic send limit", "5 per minute")
@@ -792,6 +881,7 @@ private fun SettingsScreen(contentPadding: PaddingValues, automationEnabled: Boo
             }
         }
     }
+    if (showSimDialog && phoneStateAllowed) DefaultSimDialog(defaultSimId, activeSims, { onDefaultSimChanged(it) }, { showSimDialog = false })
 }
 
 @Composable
@@ -806,7 +896,60 @@ private fun SettingGroup(title: String, content: @Composable () -> Unit) {
 private fun SettingToggle(title: String, summary: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Switch(checked, onCheckedChange)
+        AppSwitch(checked, onCheckedChange)
+    }
+}
+
+@Composable
+private fun AppSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, enabled: Boolean = true) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+            checkedTrackColor = MaterialTheme.colorScheme.primary,
+            checkedBorderColor = MaterialTheme.colorScheme.primary,
+            uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+            uncheckedTrackColor = MaterialTheme.colorScheme.surface,
+            uncheckedBorderColor = MaterialTheme.colorScheme.outline,
+            disabledCheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledCheckedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+            disabledCheckedBorderColor = Color.Transparent,
+            disabledUncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            disabledUncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledUncheckedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        ),
+    )
+}
+
+@Composable
+private fun DefaultSimDialog(current: Int, sims: List<SubscriptionInfo>, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Default SIM") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                RadioSettingRow("Auto", "Reply on the SIM that received the SMS", current == AppSettings.AUTO_SIM) { onSelect(AppSettings.AUTO_SIM); onDismiss() }
+                sims.forEach { info ->
+                    RadioSettingRow("SIM ${info.simSlotIndex + 1}", info.displayName?.toString().orEmpty(), current == info.subscriptionId) { onSelect(info.subscriptionId); onDismiss() }
+                }
+                if (sims.isEmpty()) Text("No active SIM detected.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { },
+    )
+}
+
+@Composable
+private fun RadioSettingRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -822,16 +965,35 @@ private fun SettingRow(title: String, value: String, onClick: (() -> Unit)? = nu
 }
 
 @Composable
-private fun AppTopBar(title: String, onBack: (() -> Unit)? = null) {
+private fun AppTopBar(
+    title: String,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+    titleContent: (@Composable () -> Unit)? = null,
+) {
     TopAppBar(
-        title = { Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        navigationIcon = { if (onBack != null) TextButton(onClick = onBack) { Text("< BACK", style = MaterialTheme.typography.labelMedium) } },
+        title = { titleContent?.invoke() ?: Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        navigationIcon = {
+            if (onBack != null) IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+            }
+        },
+        actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }
 
 @Composable
 private fun SectionTitle(value: String) = Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+@Composable
+private fun statusMeta(status: HistoryFilter): Pair<Color, String> = when (status) {
+    HistoryFilter.SENT -> Success to "SMS sent successfully"
+    HistoryFilter.FAILED -> MaterialTheme.colorScheme.error to "Failed to send"
+    HistoryFilter.BLOCKED -> MaterialTheme.colorScheme.tertiary to "Blocked"
+    HistoryFilter.MATCHED -> MaterialTheme.colorScheme.secondary to "Rule matched"
+    HistoryFilter.ALL -> MaterialTheme.colorScheme.onSurfaceVariant to "Activity"
+}
 
 @Composable
 private fun StatusPill(value: String, color: Color) {

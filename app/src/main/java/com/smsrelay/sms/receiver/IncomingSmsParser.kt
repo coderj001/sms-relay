@@ -8,8 +8,18 @@ object IncomingSmsParser {
     fun parse(intent: Intent): IncomingSms? {
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isEmpty()) return null
+
         val sender = messages.firstOrNull()?.originatingAddress
         val receivedAt = messages.maxOf { it.timestampMillis }
-        return IncomingSms(sender, messages.joinToString(separator = "") { it.messageBody.orEmpty() }, receivedAt, messages.firstOrNull()?.subscriptionId)
+        val body = messages.joinToString(separator = "") { it.messageBody.orEmpty() }
+
+        // Extract subscriptionId from intent extras as SmsMessage.subscriptionId is not available on all SDKs
+        val subscriptionId = if (intent.hasExtra("subscription")) {
+            intent.getIntExtra("subscription", -1)
+        } else {
+            intent.getIntExtra("android.telephony.extra.SUBSCRIPTION_INDEX", -1)
+        }.takeIf { it != -1 }
+
+        return IncomingSms(sender, body, receivedAt, subscriptionId)
     }
 }

@@ -10,5 +10,6 @@ sealed interface RuleEvaluation {
 data class RuleMatch(
     val value: String,
     val groups: List<String?>,
+    val namedGroups: Map<String, String?> = emptyMap(),
 )
 

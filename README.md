@@ -39,7 +39,7 @@ MESSAGE              OTP received: {{match_1}}
 
 The built-in rule tester previews the match and outgoing message. It never sends an SMS.
 
-## What the app is designed to do
+## What the app does
 
 - Match a sender exactly, or intentionally allow any sender.
 - Match the complete incoming SMS body with a regular expression.
@@ -57,7 +57,7 @@ SMS messages can include OTPs, financial information, and personal data. The pro
 - Processing, rules, and history stay on the device.
 - The MVP needs only RECEIVE_SMS and SEND_SMS — never READ_SMS or INTERNET.
 - Rules remain disabled until a user enables them.
-- Broad rules such as “any sender” + `.*` receive a clear warning.
+- Broad rules such as "any sender" + `.*` receive a clear warning.
 - Sending is rate-limited and duplicate message events are ignored.
 - Release logging must not include message bodies, OTPs, or full phone numbers.
 - A successful send request is never presented as delivery confirmation.
@@ -68,11 +68,12 @@ See [Security & Privacy](docs/SECURITY_PRIVACY.md) for the full threat model and
 
 The project currently includes:
 
-- A polished Material 3 Compose prototype: Rules, Create Rule, Regex Tester, History, Details, Permission Onboarding, and Settings.
-- Pure Kotlin rule matching and template-rendering components with unit tests.
-- An Android project baseline with the correct, minimal SMS permissions declared.
-
-The SMS receiver, sender, Room persistence, rule repository, and safety-control persistence are not wired together yet. This branch cannot forward real messages.
+- **Full end-to-end forwarding pipeline**: SMS_RECEIVED broadcast → Room persistence → rule matching → template rendering → SmsManager.sendTextMessage → execution history logging.
+- **Verified on device**: Kotak Bank UPI message pattern matched, forwarded to destination number.
+- **Polished Material 3 Compose UI**: Rules, Create/Edit Rule, Regex Tester, History, Execution Details, Permission Onboarding, Settings.
+- **Pure Kotlin rule matching and template-rendering components** with unit tests (20/20 passing).
+- **Convention plugin build logic** (`build-logic/` composite build) centralizing SDK/JVM configuration.
+- **Android project baseline** with the correct, minimal SMS permissions declared.
 
 ## Architecture
 
@@ -94,17 +95,30 @@ The core matching, template, deduplication, and rate-limit logic stays independe
 - Android SDK Platform 35 and Build-Tools 35.x
 - Android Studio (recommended) or a compatible Gradle installation
 
-Open the repository root in Android Studio to sync the project. The project is pinned to Gradle 8.10.2 through gradle/wrapper/gradle-wrapper.properties; Android Studio may download that distribution and project dependencies during the first sync.
+Open the repository root in Android Studio to sync the project. The project is pinned to Gradle 8.10.2 through `gradle/wrapper/gradle-wrapper.properties`; Android Studio may download that distribution and project dependencies during the first sync.
+
+### Build structure
+
+- `build-logic/` — composite build with convention plugin (`myapp.android.application`) setting compileSdk, minSdk, JVM toolchain, and packaging excludes.
+- `app/` — single application module applying the convention plugin + KSP + Compose.
 
 ### Commands
 
 ```bash
-gradle test
-gradle lint
-gradle assembleDebug
+# Full build
+./gradlew :app:assembleDebug
+
+# Unit tests
+./gradlew :app:testDebugUnitTest
+
+# Lint
+./gradlew :app:lint
+
+# Install on connected device
+./gradlew :app:installDebug
 ```
 
-When telephony code lands, validate it on a physical Android device as well. Emulators do not provide meaningful SMS delivery confidence.
+Validate on a physical Android device — emulators do not provide meaningful SMS delivery confidence.
 
 ## Documentation
 
