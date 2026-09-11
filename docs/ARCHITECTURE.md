@@ -55,6 +55,12 @@ Not responsible for:
 - database transactions
 - deduplication
 
+Screen composables live in focused files under `ui/`, with shared widgets in
+`UiComponents.kt`. `SmsRelayApp.kt` owns navigation and persistence callbacks.
+It observes Room rule/history flows and DataStore preferences with lifecycle-aware
+collection, so rule changes no longer require manual list reloads. The master
+switch persists the same `MASTER_AUTOMATION` setting read by incoming-SMS processing.
+
 ### ViewModel
 
 Responsible for:

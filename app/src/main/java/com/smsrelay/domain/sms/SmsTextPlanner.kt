@@ -37,14 +37,12 @@ class SmsTextPlanner {
             SmsTextPlan.Multipart(text, SmsEncoding.GSM_7BIT, splitBySeptetWeight(text, MULTIPART_GSM_SEPTETS))
         }
 
-    private fun planUcs2(text: String): SmsTextPlan {
-        val codePoints = text.codePointCount(0, text.length)
-        return if (codePoints <= SINGLE_UCS2_CODE_UNITS) {
+    private fun planUcs2(text: String): SmsTextPlan =
+        if (text.length <= SINGLE_UCS2_CODE_UNITS) {
             SmsTextPlan.Single(text, SmsEncoding.UCS_2)
         } else {
-            SmsTextPlan.Multipart(text, SmsEncoding.UCS_2, splitByCodePoints(text, MULTIPART_UCS2_CODE_UNITS))
+            SmsTextPlan.Multipart(text, SmsEncoding.UCS_2, splitByCodeUnits(text, MULTIPART_UCS2_CODE_UNITS))
         }
-    }
 
     private fun splitBySeptetWeight(text: String, limit: Int): List<String> {
         val parts = mutableListOf<String>()
@@ -64,19 +62,17 @@ class SmsTextPlanner {
         return parts
     }
 
-    private fun splitByCodePoints(text: String, limit: Int): List<String> {
+    private fun splitByCodeUnits(text: String, limit: Int): List<String> {
         val parts = mutableListOf<String>()
         var start = 0
-        var count = 0
         var index = 0
         while (index < text.length) {
-            if (count == limit) {
+            val codeUnits = Character.charCount(text.codePointAt(index))
+            if (index - start + codeUnits > limit) {
                 parts += text.substring(start, index)
                 start = index
-                count = 0
             }
-            index += Character.charCount(text.codePointAt(index))
-            count++
+            index += codeUnits
         }
         if (start < text.length) parts += text.substring(start)
         return parts

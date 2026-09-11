@@ -107,6 +107,16 @@ concurrent reservations
 process restart persistence
 ```
 
+### SMS text planning
+
+Cover:
+
+- GSM basic and extension alphabet segment limits
+- Unicode single-part and multipart limits measured in UTF-16 code units
+- Emoji at and beyond the 70-code-unit single-part boundary
+- Surrogate pairs at the 67-code-unit multipart boundary
+- Exact reconstruction of the original text from all planned segments
+
 ### Processing use case
 
 Use fakes for repositories, clock, sender, dedupe, and limiter.

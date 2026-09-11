@@ -1,6 +1,8 @@
 package com.smsrelay.domain.sms
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SmsTextPlannerTest {
@@ -20,6 +22,65 @@ class SmsTextPlannerTest {
 
         assertEquals(SmsEncoding.UCS_2, plan.encoding)
         assertEquals(listOf("অ".repeat(70)), plan.parts)
+    }
+
+    @Test
+    fun `35 emoji fit in a single ucs2 message`() {
+        val message = "😀".repeat(35)
+
+        val plan = SmsTextPlanner().plan(message)
+
+        assertTrue(plan is SmsTextPlan.Single)
+        assertEquals(SmsEncoding.UCS_2, plan.encoding)
+        assertEquals(listOf(message), plan.parts)
+    }
+
+    @Test
+    fun `36 emoji require multipart ucs2 segments`() {
+        val plan = SmsTextPlanner().plan("😀".repeat(36))
+
+        assertTrue(plan is SmsTextPlan.Multipart)
+        assertEquals(SmsEncoding.UCS_2, plan.encoding)
+        assertEquals(listOf("😀".repeat(33), "😀".repeat(3)), plan.parts)
+    }
+
+    @Test
+    fun `surrogate pair moves to next segment when only one code unit remains`() {
+        val message = "a".repeat(66) + "😀" + "a".repeat(3)
+
+        val plan = SmsTextPlanner().plan(message)
+
+        assertEquals(listOf("a".repeat(66), "😀aaa"), plan.parts)
+    }
+
+    @Test
+    fun `ucs2 segment can use all 67 code units with mixed text`() {
+        val firstPart = "😀" + "a".repeat(65)
+        val secondPart = "😀aa"
+
+        val plan = SmsTextPlanner().plan(firstPart + secondPart)
+
+        assertEquals(listOf(firstPart, secondPart), plan.parts)
+    }
+
+    @Test
+    fun `unicode segmentation preserves text and surrogate pairs across boundaries`() {
+        val planner = SmsTextPlanner()
+        for (count in 1..160) {
+            val message = "a😀".repeat(count)
+
+            val plan = planner.plan(message)
+
+            assertEquals(message, plan.text)
+            assertEquals(message, plan.parts.joinToString(""))
+            val limit = if (message.length <= 70) 70 else 67
+            plan.parts.forEach { part ->
+                assertTrue(part.isNotEmpty())
+                assertTrue(part.length <= limit)
+                assertFalse(Character.isLowSurrogate(part.first()))
+                assertFalse(Character.isHighSurrogate(part.last()))
+            }
+        }
     }
 
     @Test

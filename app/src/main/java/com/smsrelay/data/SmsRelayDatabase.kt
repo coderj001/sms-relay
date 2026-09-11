@@ -9,6 +9,7 @@ import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Update
 import androidx.room.Delete
+import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "sms_rules")
 data class SmsRuleEntity(
@@ -44,7 +45,7 @@ data class ExecutionLogWithRule(
 @Dao
 interface SmsRelayDao {
     @Query("SELECT * FROM sms_rules ORDER BY updatedAt DESC")
-    suspend fun allRules(): List<SmsRuleEntity>
+    fun observeRules(): Flow<List<SmsRuleEntity>>
 
     @Query("SELECT * FROM sms_rules WHERE enabled = 1")
     suspend fun enabledRules(): List<SmsRuleEntity>
@@ -68,7 +69,7 @@ interface SmsRelayDao {
         "SELECT l.*, r.name AS ruleName FROM execution_logs l " +
             "LEFT JOIN sms_rules r ON l.ruleId = r.id ORDER BY l.createdAt DESC",
     )
-    fun allExecutionLogs(): kotlinx.coroutines.flow.Flow<List<ExecutionLogWithRule>>
+    fun allExecutionLogs(): Flow<List<ExecutionLogWithRule>>
 
     @Query("DELETE FROM execution_logs")
     suspend fun clearExecutionLogs()

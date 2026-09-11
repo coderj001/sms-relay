@@ -10,7 +10,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -24,6 +23,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.datastore.preferences.core.edit
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.smsrelay.data.AppSettings
 import com.smsrelay.data.settingsDataStore
 import com.smsrelay.ui.SmsRelayApp
@@ -44,7 +44,7 @@ private fun SmsRelayTheme() {
     val scope = rememberCoroutineScope()
     val colorPalette by remember(context) {
         context.settingsDataStore.data.map { AppColorPalette.fromId(it[AppSettings.COLOR_PALETTE]) }
-    }.collectAsState(initial = AppColorPalette.MONOCHROME)
+    }.collectAsStateWithLifecycle(initialValue = AppColorPalette.MONOCHROME)
     val darkMode = isSystemInDarkTheme()
     val colors = if (darkMode) {
         darkColorScheme(
